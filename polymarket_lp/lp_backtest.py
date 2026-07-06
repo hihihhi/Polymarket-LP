@@ -24,6 +24,10 @@ class LPConfig:
     assumed_competitor_score: float = 2000.0
     active_capital_limit: float = 1700.0
     max_dt_seconds: float = 300.0
+    min_reward_daily: float = 0.0
+    max_market_competitiveness: float = 1.0
+    allowed_categories: str = ""
+    excluded_categories: str = "sports,crypto"
 
 
 @dataclass(slots=True)
@@ -66,6 +70,36 @@ def load_snapshots(path: str | Path) -> pd.DataFrame:
     df["cluster"] = df["cluster"].fillna("unknown").astype(str)
     df = df.dropna(subset=["timestamp", "condition_id", "yes_mid", "no_mid", "reward_daily", "max_incentive_spread"])
     return df.sort_values(["timestamp", "condition_id"]).reset_index(drop=True)
+
+
+def _csv_set(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    return {part.strip().lower() for part in str(value).split(",") if part.strip()}
+
+
+def filter_snapshots_for_strategy(snapshots: pd.DataFrame, cfg: LPConfig) -> pd.DataFrame:
+    """Apply portfolio-level market filters before quoting.
+
+    The default mandate intentionally avoids sports and crypto-style high-volatility
+    clusters. This is not a data-mined truth; it is a risk-control default for the
+    LP strategy because one-sided fills dominate rewards in jumpy markets.
+    """
+    df = snapshots.copy()
+    if "reward_daily" in df:
+        df = df[pd.to_numeric(df["reward_daily"], errors="coerce").fillna(0) >= cfg.min_reward_daily]
+    if "market_competitiveness" in df:
+        df = df[pd.to_numeric(df["market_competitiveness"], errors="coerce").fillna(1) <= cfg.max_market_competitiveness]
+    if "category" in df:
+        cat = df["category"].fillna("unknown").astype(str).str.lower()
+        allowed = _csv_set(cfg.allowed_categories)
+        excluded = _csv_set(cfg.excluded_categories)
+        if allowed:
+            df = df[cat.isin(allowed)]
+            cat = df["category"].fillna("unknown").astype(str).str.lower()
+        if excluded:
+            df = df[~cat.isin(excluded)]
+    return df.reset_index(drop=True)
 
 
 def order_score(max_spread: float, distance_from_mid: float, size: float) -> float:
@@ -156,7 +190,11 @@ def handle_fill(*, inventory: list[InventoryLot], events: list[dict[str, Any]], 
 
 
 def simulate_lp(snapshots: pd.DataFrame, cfg: LPConfig) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    df = snapshots.copy().sort_values(["condition_id", "timestamp"]).reset_index(drop=True)
+    df = filter_snapshots_for_strategy(snapshots, cfg).sort_values(["condition_id", "timestamp"]).reset_index(drop=True)
+    if df.empty:
+        empty_events = pd.DataFrame()
+        empty_equity = pd.DataFrame()
+        return empty_events, empty_equity, pd.DataFrame()
     df["next_ts"] = df.groupby("condition_id")["timestamp"].shift(-1)
     df["next_yes_mid"] = df.groupby("condition_id")["yes_mid"].shift(-1)
     df["next_no_mid"] = df.groupby("condition_id")["no_mid"].shift(-1)
