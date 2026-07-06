@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import pandas as pd
 
-from polymarket_lp.lp_backtest import LPConfig, handle_fill, make_synthetic_snapshots, quote_for_row, simulate_lp
+from polymarket_lp.lp_backtest import (
+    LPConfig,
+    filter_snapshots_for_strategy,
+    handle_fill,
+    make_synthetic_snapshots,
+    quote_for_row,
+    simulate_lp,
+)
 
 
 def test_quote_enforces_pair_safety() -> None:
@@ -67,3 +74,10 @@ def test_synthetic_backtest_outputs_core_metrics() -> None:
         "max_open_inventory_notional",
     ]:
         assert col in summary.columns
+
+
+def test_default_filter_excludes_sports_and_crypto() -> None:
+    snapshots = make_synthetic_snapshots(seed=2, days=1, n_markets=6)
+    filtered = filter_snapshots_for_strategy(snapshots, LPConfig())
+    assert not set(filtered["category"].str.lower()).intersection({"sports", "crypto"})
+    assert len(filtered) < len(snapshots)
