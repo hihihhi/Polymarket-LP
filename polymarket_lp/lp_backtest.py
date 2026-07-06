@@ -28,6 +28,13 @@ class LPConfig:
     max_market_competitiveness: float = 1.0
     allowed_categories: str = ""
     excluded_categories: str = "sports,crypto"
+    # Candidate selection / adaptive risk gates
+    rank_by_reward_density: bool = True
+    min_reward_density_per_day: float = 0.0
+    recent_vol_window: int = 6
+    max_recent_vol: float = 1.0
+    max_recent_jump: float = 1.0
+    vol_quote_multiplier: float = 0.0
 
 
 @dataclass(slots=True)
@@ -119,11 +126,13 @@ def competitor_score_for_row(row: pd.Series, cfg: LPConfig) -> float:
     return cfg.assumed_competitor_score
 
 
-def quote_for_row(row: pd.Series, cfg: LPConfig) -> dict[str, float | bool]:
+def quote_for_row(row: pd.Series, cfg: LPConfig, *, quote_offset: float | None = None, quote_size: float | None = None) -> dict[str, float | bool]:
+    offset = cfg.quote_offset if quote_offset is None else float(quote_offset)
+    size = cfg.quote_size_shares if quote_size is None else float(quote_size)
     y_mid = float(row["yes_mid"])
     n_mid = float(row["no_mid"])
-    y_bid = max(0.001, y_mid - cfg.quote_offset)
-    n_bid = max(0.001, n_mid - cfg.quote_offset)
+    y_bid = max(0.001, y_mid - offset)
+    n_bid = max(0.001, n_mid - offset)
     pair_cost = y_bid + n_bid
     if pair_cost > 1 - cfg.safety_margin:
         cut = (pair_cost - (1 - cfg.safety_margin)) / 2
@@ -132,13 +141,16 @@ def quote_for_row(row: pd.Series, cfg: LPConfig) -> dict[str, float | bool]:
         pair_cost = y_bid + n_bid
     max_spread = float(row["max_incentive_spread"])
     min_size = float(row.get("min_incentive_size", 0))
-    eligible = cfg.quote_size_shares >= min_size and cfg.quote_offset <= max_spread and pair_cost <= 1 - cfg.safety_margin + 1e-9
-    y_score = order_score(max_spread, y_mid - y_bid, cfg.quote_size_shares)
-    n_score = order_score(max_spread, n_mid - n_bid, cfg.quote_size_shares)
+    eligible = size >= min_size and offset <= max_spread and pair_cost <= 1 - cfg.safety_margin + 1e-9
+    y_score = order_score(max_spread, y_mid - y_bid, size)
+    n_score = order_score(max_spread, n_mid - n_bid, size)
     our_score = min(y_score, n_score) if eligible else 0.0
     comp = competitor_score_for_row(row, cfg)
     share = our_score / (our_score + comp) if our_score > 0 else 0.0
-    return {"eligible": bool(eligible), "yes_bid": y_bid, "no_bid": n_bid, "pair_cost": pair_cost, "our_score": our_score, "competitor_score": comp, "reward_share": share}
+    active_order_notional = size * (y_bid + n_bid)
+    expected_reward_per_day = float(row.get("reward_daily", 0.0)) * share
+    reward_density_per_day = expected_reward_per_day / active_order_notional if active_order_notional > 0 else 0.0
+    return {"eligible": bool(eligible), "yes_bid": y_bid, "no_bid": n_bid, "pair_cost": pair_cost, "our_score": our_score, "competitor_score": comp, "reward_share": share, "quote_offset": offset, "quote_size": size, "active_order_notional": active_order_notional, "expected_reward_per_day": expected_reward_per_day, "reward_density_per_day": reward_density_per_day}
 
 
 def inv_notional(inv: list[InventoryLot], *, condition_id: str | None = None, cluster: str | None = None) -> float:
@@ -195,6 +207,9 @@ def simulate_lp(snapshots: pd.DataFrame, cfg: LPConfig) -> tuple[pd.DataFrame, p
         empty_events = pd.DataFrame()
         empty_equity = pd.DataFrame()
         return empty_events, empty_equity, pd.DataFrame()
+    df["mid_change"] = df.groupby("condition_id")["yes_mid"].diff().abs().fillna(0.0)
+    df["recent_vol"] = df.groupby("condition_id")["mid_change"].transform(lambda s: s.rolling(cfg.recent_vol_window, min_periods=1).mean())
+    df["recent_jump"] = df.groupby("condition_id")["mid_change"].transform(lambda s: s.rolling(cfg.recent_vol_window, min_periods=1).max())
     df["next_ts"] = df.groupby("condition_id")["timestamp"].shift(-1)
     df["next_yes_mid"] = df.groupby("condition_id")["yes_mid"].shift(-1)
     df["next_no_mid"] = df.groupby("condition_id")["no_mid"].shift(-1)
@@ -221,11 +236,23 @@ def simulate_lp(snapshots: pd.DataFrame, cfg: LPConfig) -> tuple[pd.DataFrame, p
         inv = still
         active = one_open = paired_sh = cap_sh = rew_ts = pair_ts = exit_ts = 0.0
         eligible = skipped = 0
+        candidates: list[tuple[float, pd.Series, dict[str, float | bool]]] = []
         for _, row in rows.iterrows():
-            q = quote_for_row(row, cfg)
+            if float(row.get("recent_vol", 0.0)) > cfg.max_recent_vol or float(row.get("recent_jump", 0.0)) > cfg.max_recent_jump:
+                events.append({"timestamp": ts, "condition_id": row["condition_id"], "event": "SKIP_VOLATILITY", "recent_vol": float(row.get("recent_vol", 0.0)), "recent_jump": float(row.get("recent_jump", 0.0)), "cluster": row.get("cluster", "unknown")})
+                continue
+            adaptive_offset = cfg.quote_offset + cfg.vol_quote_multiplier * float(row.get("recent_vol", 0.0))
+            q = quote_for_row(row, cfg, quote_offset=adaptive_offset)
             if not q["eligible"]:
                 continue
-            order_notional = cfg.quote_size_shares * (float(q["yes_bid"]) + float(q["no_bid"]))
+            if float(q["reward_density_per_day"]) < cfg.min_reward_density_per_day:
+                events.append({"timestamp": ts, "condition_id": row["condition_id"], "event": "SKIP_REWARD_DENSITY", "reward_density_per_day": float(q["reward_density_per_day"]), "cluster": row.get("cluster", "unknown")})
+                continue
+            sort_key = float(q["reward_density_per_day"] if cfg.rank_by_reward_density else q["expected_reward_per_day"])
+            candidates.append((sort_key, row, q))
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        for _, row, q in candidates:
+            order_notional = float(q["active_order_notional"])
             if active + order_notional > cfg.active_capital_limit:
                 skipped += 1
                 continue
@@ -234,7 +261,7 @@ def simulate_lp(snapshots: pd.DataFrame, cfg: LPConfig) -> tuple[pd.DataFrame, p
             rw = float(row["reward_daily"]) * (float(row["dt_seconds"]) / 86400) * float(q["reward_share"])
             reward += rw
             rew_ts += rw
-            events.append({"timestamp": ts, "condition_id": row["condition_id"], "event": "REWARD_ACCRUAL", "reward_usdc": rw, "reward_share": q["reward_share"], "our_score": q["our_score"], "competitor_score": q["competitor_score"], "active_order_notional": order_notional, "pair_cost": q["pair_cost"], "cluster": row.get("cluster", "unknown")})
+            events.append({"timestamp": ts, "condition_id": row["condition_id"], "event": "REWARD_ACCRUAL", "reward_usdc": rw, "reward_share": q["reward_share"], "our_score": q["our_score"], "competitor_score": q["competitor_score"], "active_order_notional": order_notional, "pair_cost": q["pair_cost"], "quote_offset": q["quote_offset"], "reward_density_per_day": q["reward_density_per_day"], "cluster": row.get("cluster", "unknown")})
             if pd.isna(row["next_yes_mid"]) or pd.isna(row["next_no_mid"]):
                 continue
             fills = []
@@ -243,7 +270,7 @@ def simulate_lp(snapshots: pd.DataFrame, cfg: LPConfig) -> tuple[pd.DataFrame, p
             if float(row["next_no_mid"]) <= float(q["no_bid"]):
                 fills.append(("NO", float(q["no_bid"])))
             for side, price in fills:
-                inv, pp, ep, ps, os, cs = handle_fill(inventory=inv, events=events, timestamp=pd.Timestamp(row["next_ts"]), condition_id=str(row["condition_id"]), side=side, price=price, size=cfg.quote_size_shares, cluster=str(row.get("cluster", "unknown")), cfg=cfg)
+                inv, pp, ep, ps, os, cs = handle_fill(inventory=inv, events=events, timestamp=pd.Timestamp(row["next_ts"]), condition_id=str(row["condition_id"]), side=side, price=price, size=float(q["quote_size"]), cluster=str(row.get("cluster", "unknown")), cfg=cfg)
                 pair_pnl += pp; exit_pnl += ep; pair_ts += pp; exit_ts += ep; paired_sh += ps; one_open += os; cap_sh += cs
         mtm = 0.0
         for lot in inv:
@@ -289,7 +316,7 @@ def summarize(events: pd.DataFrame, equity: pd.DataFrame, cfg: LPConfig) -> pd.D
     total = float(final["equity_mtm"] - cfg.initial_capital)
     avg_inv = float(equity["open_inventory_notional"].mean())
     max_dd = abs(float(equity["drawdown_mtm_usdc"].min()))
-    return pd.DataFrame([{**asdict(cfg), "total_reward_usdc": reward, "total_pair_spread_pnl_usdc": pair, "total_inventory_exit_pnl_usdc": exitp, "total_pnl_usdc": total, "return_on_initial_capital": total / cfg.initial_capital, "max_drawdown_realized_usdc": float(equity["drawdown_realized_usdc"].min()), "max_drawdown_realized_pct": float(equity["drawdown_realized_pct"].min()), "max_drawdown_mtm_usdc": float(equity["drawdown_mtm_usdc"].min()), "max_drawdown_mtm_pct": float(equity["drawdown_mtm_pct"].min()), "daily_sharpe_mtm": sharpe, "daily_sortino_mtm": sortino, "bad_day_p95_return": bad_day, "profit_factor_trading_only": gains / losses if losses else np.inf, "reward_to_trading_loss_ratio": reward / losses if losses else np.inf, "one_sided_open_shares": one, "paired_shares": paired, "pair_completion_ratio_shares": paired / max(paired + one, 1.0), "max_open_inventory_notional": float(equity["open_inventory_notional"].max()), "avg_open_inventory_notional": avg_inv, "max_active_order_notional": float(equity["active_order_notional"].max()), "avg_active_order_notional": float(equity["active_order_notional"].mean()), "reward_per_dollar_avg_inventory": reward / avg_inv if avg_inv else np.inf, "pnl_per_dollar_avg_inventory": total / avg_inv if avg_inv else np.nan, "recovery_factor": total / max_dd if max_dd else np.inf, "quote_eligibility_intervals": int(equity["eligible_quotes"].sum()), "capital_skipped_intervals": int(equity["skipped_capital"].sum())}])
+    return pd.DataFrame([{**asdict(cfg), "total_reward_usdc": reward, "total_pair_spread_pnl_usdc": pair, "total_inventory_exit_pnl_usdc": exitp, "total_pnl_usdc": total, "return_on_initial_capital": total / cfg.initial_capital, "max_drawdown_realized_usdc": float(equity["drawdown_realized_usdc"].min()), "max_drawdown_realized_pct": float(equity["drawdown_realized_pct"].min()), "max_drawdown_mtm_usdc": float(equity["drawdown_mtm_usdc"].min()), "max_drawdown_mtm_pct": float(equity["drawdown_mtm_pct"].min()), "daily_sharpe_mtm": sharpe, "daily_sortino_mtm": sortino, "bad_day_p95_return": bad_day, "profit_factor_trading_only": gains / losses if losses else math.inf, "reward_to_trading_loss_ratio": reward / losses if losses else math.inf, "one_sided_open_shares": one, "paired_shares": paired, "pair_completion_ratio_shares": paired / max(paired + one, 1.0), "max_open_inventory_notional": float(equity["open_inventory_notional"].max()), "avg_open_inventory_notional": avg_inv, "max_active_order_notional": float(equity["active_order_notional"].max()), "avg_active_order_notional": float(equity["active_order_notional"].mean()), "reward_per_dollar_avg_inventory": reward / avg_inv if avg_inv else math.inf, "pnl_per_dollar_avg_inventory": total / avg_inv if avg_inv else math.nan, "recovery_factor": total / max_dd if max_dd else math.inf, "quote_eligibility_intervals": int(equity["eligible_quotes"].sum()), "capital_skipped_intervals": int(equity["skipped_capital"].sum())}])
 
 
 def make_synthetic_snapshots(seed: int = 7, days: int = 14, n_markets: int = 30) -> pd.DataFrame:
