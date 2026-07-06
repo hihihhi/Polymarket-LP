@@ -8,13 +8,36 @@ This repo is for **liquidity-provider reward farming**, not directional predicti
 How much reward income do we earn per dollar of unpaired inventory risk?
 ```
 
+## Resume here
+
+Start with:
+
+```text
+docs/RESUME.md
+```
+
+That file records the current strategy, current best synthetic benchmark, exact commands, implementation status, remaining gaps, pass/fail rules, and next build order.
+
+Core docs:
+
+```text
+docs/STRATEGY_V2_REWARD_DENSITY_RESCUE_LP.md  # main strategy spec
+docs/PAPER_RUN_AND_BACKTEST.md                # backtest + paper replay workflow
+docs/RESULTS.md                               # current synthetic result summary
+docs/METRICS_SPEC.md                          # full metric stack
+docs/RESUME.md                                # current handoff state
+```
+
 ## Current status
 
 The repo includes an L0/L1-style backtest scaffold:
 
 - synthetic stress backtest for sanity checks;
 - snapshot replay backtest once point-in-time market/orderbook data is collected;
+- paper replay that writes intended quote rows from snapshots;
 - reward-share approximation using market reward pool, max spread, min size, quote distance, and competitor score;
+- reward-density ranking;
+- volatility and recent-jump gates;
 - paired YES/NO inventory accounting;
 - mark-to-market equity and drawdown metrics;
 - one-sided fill, pair completion, reward-to-loss, and inventory-risk metrics.
@@ -29,9 +52,41 @@ source .venv/bin/activate
 pip install -e .[dev]
 ```
 
-## Run a synthetic sanity-check backtest
+## Current refined synthetic benchmark
 
-The default run now excludes `sports,crypto` categories because the first stress test showed those clusters dominated one-sided inventory losses.
+This is the current best L0 synthetic profile. It is not live proof.
+
+```bash
+python scripts/lp_backtest.py \
+  --synthetic \
+  --quote-size 800 \
+  --quote-offset 0.035 \
+  --excluded-categories "" \
+  --active-capital-limit 1900 \
+  --max-unpaired-per-market 800 \
+  --max-total-unpaired 1200 \
+  --max-cluster-unpaired 600 \
+  --exit-loss-cents 0.05 \
+  --max-unpaired-minutes 90 \
+  --max-recent-vol 0.006 \
+  --max-recent-jump 0.025 \
+  --vol-quote-multiplier 0.5 \
+  --out-dir data/processed/income_density_wide
+```
+
+Latest benchmark summary:
+
+```text
+net PnL = +$134.22 over 14 days
+30-day equivalent = ~$287.61
+max MTM drawdown = -3.10%
+reward/loss = 4.21
+max open inventory = $330.97
+```
+
+## Run a simple synthetic sanity-check backtest
+
+The default run excludes `sports,crypto` categories because the first stress test showed those clusters dominated one-sided inventory losses.
 
 ```bash
 python scripts/lp_backtest.py --synthetic --out-dir data/processed/synthetic_default
@@ -64,6 +119,18 @@ python scripts/sweep_lp_configs.py \
 ```
 
 The sweep ranks quote size, quote offset, inventory limits, exit loss, reward filters, and competition filters.
+
+## Paper replay
+
+After collecting point-in-time snapshots:
+
+```bash
+python scripts/paper_replay.py \
+  --snapshots data/raw/orderbook_snapshots.csv \
+  --out data/processed/paper_quotes.csv
+```
+
+This writes intended quotes only. It does not sign orders, submit orders, cancel orders, or touch private keys.
 
 ## Run with real snapshots
 
@@ -108,7 +175,9 @@ The backtest is conservative and intentionally imperfect until full WebSocket qu
 - filter out high-volatility categories/clusters by default, currently `sports,crypto`;
 - quote both YES and NO bids at `mid - quote_offset`;
 - enforce complete-set safety: `YES bid + NO bid <= 1 - safety_margin`;
+- rank markets by estimated reward density;
 - estimate reward share from an approximate quadratic order score;
+- apply volatility and recent-jump gates;
 - simulate toxic fills when the next midpoint moves through our bid;
 - pair opposite YES/NO inventory into complete sets when possible;
 - exit stale or adverse naked inventory according to risk limits;
