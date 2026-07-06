@@ -31,8 +31,16 @@ pip install -e .[dev]
 
 ## Run a synthetic sanity-check backtest
 
+The default run now excludes `sports,crypto` categories because the first stress test showed those clusters dominated one-sided inventory losses.
+
 ```bash
 python scripts/lp_backtest.py --synthetic --out-dir data/processed/synthetic_default
+```
+
+To include everything and prove the dangerous baseline, override the filter:
+
+```bash
+python scripts/lp_backtest.py --synthetic --excluded-categories "" --out-dir data/processed/synthetic_all_markets
 ```
 
 Outputs:
@@ -42,6 +50,20 @@ data/processed/synthetic_default/lp_summary.csv
 data/processed/synthetic_default/lp_equity_curve.csv
 data/processed/synthetic_default/lp_events.csv
 ```
+
+## Sweep configs
+
+Use the sweep script to avoid trusting one arbitrary parameter set:
+
+```bash
+python scripts/sweep_lp_configs.py \
+  --synthetic \
+  --synthetic-days 7 \
+  --synthetic-markets 18 \
+  --out data/processed/lp_config_sweep.csv
+```
+
+The sweep ranks quote size, quote offset, inventory limits, exit loss, reward filters, and competition filters.
 
 ## Run with real snapshots
 
@@ -83,6 +105,7 @@ market_competitiveness, competitor_score
 
 The backtest is conservative and intentionally imperfect until full WebSocket quote history exists:
 
+- filter out high-volatility categories/clusters by default, currently `sports,crypto`;
 - quote both YES and NO bids at `mid - quote_offset`;
 - enforce complete-set safety: `YES bid + NO bid <= 1 - safety_margin`;
 - estimate reward share from an approximate quadratic order score;
