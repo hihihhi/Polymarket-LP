@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from polymarket_lp.lp_backtest import LPConfig, load_snapshots, make_synthetic_snapshots, run_backtest_to_files
 
@@ -27,6 +32,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--synthetic-days", type=int, default=14)
     p.add_argument("--synthetic-markets", type=int, default=30)
+    p.add_argument("--min-reward-daily", type=float, default=0.0)
+    p.add_argument("--max-market-competitiveness", type=float, default=1.0)
+    p.add_argument("--allowed-categories", default="")
+    p.add_argument("--excluded-categories", default="sports,crypto")
     return p.parse_args()
 
 
@@ -44,6 +53,10 @@ def main() -> None:
         max_unpaired_minutes=args.max_unpaired_minutes,
         assumed_competitor_score=args.assumed_competitor_score,
         active_capital_limit=args.active_capital_limit,
+        min_reward_daily=args.min_reward_daily,
+        max_market_competitiveness=args.max_market_competitiveness,
+        allowed_categories=args.allowed_categories,
+        excluded_categories=args.excluded_categories,
     )
     if args.synthetic:
         snapshots = make_synthetic_snapshots(seed=args.seed, days=args.synthetic_days, n_markets=args.synthetic_markets)
