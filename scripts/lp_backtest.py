@@ -36,6 +36,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-market-competitiveness", type=float, default=1.0)
     p.add_argument("--allowed-categories", default="")
     p.add_argument("--excluded-categories", default="sports,crypto")
+    p.add_argument("--min-reward-density-per-day", type=float, default=0.0)
+    p.add_argument("--recent-vol-window", type=int, default=6)
+    p.add_argument("--max-recent-vol", type=float, default=1.0)
+    p.add_argument("--max-recent-jump", type=float, default=1.0)
+    p.add_argument("--vol-quote-multiplier", type=float, default=0.0)
+    p.add_argument("--no-rank-by-reward-density", action="store_true")
     return p.parse_args()
 
 
@@ -57,6 +63,12 @@ def main() -> None:
         max_market_competitiveness=args.max_market_competitiveness,
         allowed_categories=args.allowed_categories,
         excluded_categories=args.excluded_categories,
+        rank_by_reward_density=not args.no_rank_by_reward_density,
+        min_reward_density_per_day=args.min_reward_density_per_day,
+        recent_vol_window=args.recent_vol_window,
+        max_recent_vol=args.max_recent_vol,
+        max_recent_jump=args.max_recent_jump,
+        vol_quote_multiplier=args.vol_quote_multiplier,
     )
     if args.synthetic:
         snapshots = make_synthetic_snapshots(seed=args.seed, days=args.synthetic_days, n_markets=args.synthetic_markets)
