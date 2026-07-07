@@ -11,6 +11,7 @@ from polymarket_lp.lp_backtest import (
     handle_fill,
     make_synthetic_snapshots,
     quote_for_row,
+    rescue_quote_for_inventory,
     simulate_lp,
 )
 from polymarket_lp.paper import (
@@ -85,6 +86,78 @@ def test_handle_fill_pairs_opposite_inventory() -> None:
     assert exit_pnl == 0
     assert paired_shares == 10
     assert opened_shares == 0
+
+
+def test_rescue_quote_locks_pair_edge_before_rewards() -> None:
+    row = pd.Series({"yes_mid": 0.45, "no_mid": 0.55})
+    rescue = rescue_quote_for_inventory(
+        row=row,
+        inventory_side="YES",
+        worst_entry_price=0.45,
+        size=10,
+        cfg=LPConfig(rescue_min_pair_edge_per_share=0.01, rescue_quote_offset=0.005),
+    )
+    assert rescue["eligible"]
+    assert rescue["side"] == "NO"
+    assert rescue["bid_price"] <= 0.54
+    assert rescue["pair_edge_per_share"] >= 0.01 - 1e-12
+
+
+def test_simulate_lp_uses_rescue_quote_to_complete_one_sided_inventory() -> None:
+    snapshots = pd.DataFrame(
+        [
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "reward_daily": 100.0,
+                "max_incentive_spread": 0.06,
+                "min_incentive_size": 1.0,
+                "yes_mid": 0.50,
+                "no_mid": 0.50,
+                "category": "economics",
+                "cluster": "economics",
+            },
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:05:00Z"),
+                "condition_id": "m1",
+                "reward_daily": 100.0,
+                "max_incentive_spread": 0.06,
+                "min_incentive_size": 1.0,
+                "yes_mid": 0.44,
+                "no_mid": 0.56,
+                "category": "economics",
+                "cluster": "economics",
+            },
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:10:00Z"),
+                "condition_id": "m1",
+                "reward_daily": 100.0,
+                "max_incentive_spread": 0.06,
+                "min_incentive_size": 1.0,
+                "yes_mid": 0.47,
+                "no_mid": 0.53,
+                "category": "economics",
+                "cluster": "economics",
+            },
+        ]
+    )
+    cfg = LPConfig(
+        quote_size_shares=10,
+        quote_offset=0.05,
+        safety_margin=0.01,
+        rescue_min_pair_edge_per_share=0.01,
+        rescue_quote_offset=0.005,
+        exit_loss_cents=1.0,
+        max_unpaired_minutes=999,
+    )
+    events, _, summary = simulate_lp(snapshots, cfg)
+    assert "RESCUE_QUOTE" in set(events["event"])
+    merged = events[events["event"].eq("PAIR_MERGED")]
+    assert not merged.empty
+    assert float(merged["pair_cost"].max()) <= 0.99 + 1e-12
+    assert float(summary.iloc[0]["total_pair_spread_pnl_usdc"]) >= 0.10 - 1e-12
+    assert int(summary.iloc[0]["rescue_quote_count"]) >= 1
+    assert float(summary.iloc[0]["pair_completion_ratio_of_opened_shares"]) == 1.0
 
 
 def test_synthetic_backtest_outputs_core_metrics() -> None:

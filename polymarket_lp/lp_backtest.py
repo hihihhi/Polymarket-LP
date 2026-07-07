@@ -18,6 +18,9 @@ class LPConfig:
     max_unpaired_per_market: float = 60.0
     max_total_unpaired: float = 450.0
     max_cluster_unpaired: float = 250.0
+    enable_rescue_quotes: bool = True
+    rescue_min_pair_edge_per_share: float = 0.0
+    rescue_quote_offset: float = 0.005
     exit_loss_cents: float = 0.025
     max_unpaired_minutes: float = 30.0
     exit_slippage: float = 0.005
@@ -220,6 +223,72 @@ def mark_lot(lot: InventoryLot, row: pd.Series, cfg: LPConfig) -> float:
     return max(0.0, min(1.0, mid - cfg.exit_slippage))
 
 
+def rescue_quote_for_inventory(
+    *,
+    row: pd.Series,
+    inventory_side: str,
+    worst_entry_price: float,
+    size: float,
+    cfg: LPConfig,
+) -> dict[str, float | str | bool]:
+    """Plan an opposite-side rescue quote for one-sided inventory.
+
+    A rescue quote is only allowed when the completed YES+NO pair still locks at
+    least ``rescue_min_pair_edge_per_share`` before rewards. This turns a naked
+    LP fill into a complete set when the opposite side becomes fillable, instead
+    of relying on directional beliefs.
+    """
+
+    side = str(inventory_side).upper()
+    rescue_side = "NO" if side == "YES" else "YES"
+    opposite_mid = float(row["no_mid"] if rescue_side == "NO" else row["yes_mid"])
+    max_bid = 1.0 - float(worst_entry_price) - cfg.rescue_min_pair_edge_per_share
+    post_only_bid = opposite_mid - cfg.rescue_quote_offset
+    bid = min(max_bid, post_only_bid)
+    eligible = (
+        bool(cfg.enable_rescue_quotes)
+        and float(size) > 0
+        and math.isfinite(max_bid)
+        and math.isfinite(post_only_bid)
+        and max_bid >= 0.001
+        and post_only_bid >= 0.001
+        and bid >= 0.001
+    )
+    if eligible:
+        bid = max(0.001, min(0.999, bid))
+    pair_cost = float(worst_entry_price) + bid if eligible else math.nan
+    return {
+        "eligible": bool(eligible),
+        "side": rescue_side,
+        "bid_price": bid if eligible else math.nan,
+        "size": float(size),
+        "worst_entry_price": float(worst_entry_price),
+        "max_rescue_bid": max_bid,
+        "opposite_mid": opposite_mid,
+        "pair_cost": pair_cost,
+        "pair_edge_per_share": 1.0 - pair_cost if eligible else math.nan,
+    }
+
+
+def _inventory_rescue_groups(inventory: list[InventoryLot]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for lot in inventory:
+        key = (lot.condition_id, lot.side)
+        row = grouped.setdefault(
+            key,
+            {
+                "condition_id": lot.condition_id,
+                "side": lot.side,
+                "cluster": lot.cluster,
+                "size": 0.0,
+                "worst_entry_price": 0.0,
+            },
+        )
+        row["size"] += lot.size
+        row["worst_entry_price"] = max(float(row["worst_entry_price"]), lot.price)
+    return list(grouped.values())
+
+
 def handle_fill(*, inventory: list[InventoryLot], events: list[dict[str, Any]], timestamp: pd.Timestamp, condition_id: str, side: str, price: float, size: float, cluster: str, cfg: LPConfig) -> tuple[list[InventoryLot], float, float, float, float, float]:
     rem = float(size)
     opp = "NO" if side == "YES" else "YES"
@@ -294,6 +363,38 @@ def simulate_lp(snapshots: pd.DataFrame, cfg: LPConfig) -> tuple[pd.DataFrame, p
         inv = still
         active = one_open = paired_sh = cap_sh = rew_ts = pair_ts = exit_ts = 0.0
         eligible = skipped = 0
+        if cfg.enable_rescue_quotes and inv:
+            rows_by_condition = {str(row["condition_id"]): row for _, row in rows.iterrows()}
+            for group in _inventory_rescue_groups(inv):
+                condition_id = str(group["condition_id"])
+                row = rows_by_condition.get(condition_id)
+                if row is None:
+                    continue
+                current_same_side = [lot for lot in inv if lot.condition_id == condition_id and lot.side == group["side"]]
+                if not current_same_side:
+                    continue
+                size = sum(lot.size for lot in current_same_side)
+                worst_entry = max(lot.price for lot in current_same_side)
+                rescue = rescue_quote_for_inventory(
+                    row=row,
+                    inventory_side=str(group["side"]),
+                    worst_entry_price=worst_entry,
+                    size=size,
+                    cfg=cfg,
+                )
+                if not rescue["eligible"]:
+                    continue
+                rescue_notional = float(rescue["bid_price"]) * float(rescue["size"])
+                if active + rescue_notional > cfg.active_capital_limit:
+                    skipped += 1
+                    events.append({"timestamp": ts, "condition_id": condition_id, "event": "RESCUE_SKIPPED_CAPITAL", "side": rescue["side"], "bid_price": rescue["bid_price"], "size": rescue["size"], "rescue_notional": rescue_notional, "cluster": group["cluster"]})
+                    continue
+                active += rescue_notional
+                events.append({"timestamp": ts, "condition_id": condition_id, "event": "RESCUE_QUOTE", "side": rescue["side"], "bid_price": rescue["bid_price"], "size": rescue["size"], "worst_entry_price": worst_entry, "max_rescue_bid": rescue["max_rescue_bid"], "pair_cost": rescue["pair_cost"], "pair_edge_per_share": rescue["pair_edge_per_share"], "rescue_notional": rescue_notional, "cluster": group["cluster"]})
+                next_mid = row["next_no_mid"] if rescue["side"] == "NO" else row["next_yes_mid"]
+                if pd.notna(row["next_ts"]) and pd.notna(next_mid) and float(next_mid) <= float(rescue["bid_price"]):
+                    inv, pp, ep, ps, os, cs = handle_fill(inventory=inv, events=events, timestamp=pd.Timestamp(row["next_ts"]), condition_id=condition_id, side=str(rescue["side"]), price=float(rescue["bid_price"]), size=float(rescue["size"]), cluster=str(group["cluster"]), cfg=cfg)
+                    pair_pnl += pp; exit_pnl += ep; pair_ts += pp; exit_ts += ep; paired_sh += ps; one_open += os; cap_sh += cs
         candidates: list[tuple[float, pd.Series, dict[str, float | bool]]] = []
         for _, row in rows.iterrows():
             if float(row.get("recent_vol", 0.0)) > cfg.max_recent_vol or float(row.get("recent_jump", 0.0)) > cfg.max_recent_jump:
@@ -361,6 +462,8 @@ def summarize(events: pd.DataFrame, equity: pd.DataFrame, cfg: LPConfig) -> pd.D
     exitp = float(events.loc[events.get("event", pd.Series(dtype=str)).isin(["EXIT_UNPAIRED", "RISK_CAP_IMMEDIATE_EXIT"]), "pnl_usdc"].sum()) if not events.empty and "pnl_usdc" in events else 0.0
     one = float(events.loc[events.get("event", pd.Series(dtype=str)).eq("OPEN_UNPAIRED"), "size"].sum()) if not events.empty and "size" in events else 0.0
     paired = float(events.loc[events.get("event", pd.Series(dtype=str)).eq("PAIR_MERGED"), "size"].sum()) if not events.empty and "size" in events else 0.0
+    rescue_quotes = int(events.get("event", pd.Series(dtype=str)).eq("RESCUE_QUOTE").sum()) if not events.empty else 0
+    rescue_skipped = int(events.get("event", pd.Series(dtype=str)).eq("RESCUE_SKIPPED_CAPITAL").sum()) if not events.empty else 0
     daily = equity.set_index("timestamp")["equity_mtm"].resample("1D").last().dropna().pct_change().dropna()
     sharpe = sortino = bad_day = np.nan
     if len(daily) >= 2:
@@ -374,7 +477,7 @@ def summarize(events: pd.DataFrame, equity: pd.DataFrame, cfg: LPConfig) -> pd.D
     total = float(final["equity_mtm"] - cfg.initial_capital)
     avg_inv = float(equity["open_inventory_notional"].mean())
     max_dd = abs(float(equity["drawdown_mtm_usdc"].min()))
-    return pd.DataFrame([{**asdict(cfg), "total_reward_usdc": reward, "total_pair_spread_pnl_usdc": pair, "total_inventory_exit_pnl_usdc": exitp, "total_pnl_usdc": total, "return_on_initial_capital": total / cfg.initial_capital, "max_drawdown_realized_usdc": float(equity["drawdown_realized_usdc"].min()), "max_drawdown_realized_pct": float(equity["drawdown_realized_pct"].min()), "max_drawdown_mtm_usdc": float(equity["drawdown_mtm_usdc"].min()), "max_drawdown_mtm_pct": float(equity["drawdown_mtm_pct"].min()), "daily_sharpe_mtm": sharpe, "daily_sortino_mtm": sortino, "bad_day_p95_return": bad_day, "profit_factor_trading_only": gains / losses if losses else math.inf, "reward_to_trading_loss_ratio": reward / losses if losses else math.inf, "one_sided_open_shares": one, "paired_shares": paired, "pair_completion_ratio_shares": paired / max(paired + one, 1.0), "max_open_inventory_notional": float(equity["open_inventory_notional"].max()), "avg_open_inventory_notional": avg_inv, "max_active_order_notional": float(equity["active_order_notional"].max()), "avg_active_order_notional": float(equity["active_order_notional"].mean()), "reward_per_dollar_avg_inventory": reward / avg_inv if avg_inv else math.inf, "pnl_per_dollar_avg_inventory": total / avg_inv if avg_inv else math.nan, "recovery_factor": total / max_dd if max_dd else math.inf, "quote_eligibility_intervals": int(equity["eligible_quotes"].sum()), "capital_skipped_intervals": int(equity["skipped_capital"].sum())}])
+    return pd.DataFrame([{**asdict(cfg), "total_reward_usdc": reward, "total_pair_spread_pnl_usdc": pair, "total_inventory_exit_pnl_usdc": exitp, "total_pnl_usdc": total, "return_on_initial_capital": total / cfg.initial_capital, "max_drawdown_realized_usdc": float(equity["drawdown_realized_usdc"].min()), "max_drawdown_realized_pct": float(equity["drawdown_realized_pct"].min()), "max_drawdown_mtm_usdc": float(equity["drawdown_mtm_usdc"].min()), "max_drawdown_mtm_pct": float(equity["drawdown_mtm_pct"].min()), "daily_sharpe_mtm": sharpe, "daily_sortino_mtm": sortino, "bad_day_p95_return": bad_day, "profit_factor_trading_only": gains / losses if losses else math.inf, "reward_to_trading_loss_ratio": reward / losses if losses else math.inf, "one_sided_open_shares": one, "paired_shares": paired, "pair_completion_ratio_shares": paired / max(paired + one, 1.0), "pair_completion_ratio_of_opened_shares": paired / one if one else math.inf, "rescue_quote_count": rescue_quotes, "rescue_skipped_capital_count": rescue_skipped, "max_open_inventory_notional": float(equity["open_inventory_notional"].max()), "avg_open_inventory_notional": avg_inv, "max_active_order_notional": float(equity["active_order_notional"].max()), "avg_active_order_notional": float(equity["active_order_notional"].mean()), "reward_per_dollar_avg_inventory": reward / avg_inv if avg_inv else math.inf, "pnl_per_dollar_avg_inventory": total / avg_inv if avg_inv else math.nan, "recovery_factor": total / max_dd if max_dd else math.inf, "quote_eligibility_intervals": int(equity["eligible_quotes"].sum()), "capital_skipped_intervals": int(equity["skipped_capital"].sum())}])
 
 
 def make_synthetic_snapshots(seed: int = 7, days: int = 14, n_markets: int = 30) -> pd.DataFrame:

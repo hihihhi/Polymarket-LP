@@ -25,6 +25,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-unpaired-per-market", type=float, default=60)
     p.add_argument("--max-total-unpaired", type=float, default=450)
     p.add_argument("--max-cluster-unpaired", type=float, default=250)
+    p.add_argument("--disable-rescue-quotes", action="store_true")
+    p.add_argument("--rescue-min-pair-edge-per-share", type=float, default=0.0)
+    p.add_argument("--rescue-quote-offset", type=float, default=0.005)
     p.add_argument("--exit-loss-cents", type=float, default=0.025)
     p.add_argument("--max-unpaired-minutes", type=float, default=30)
     p.add_argument("--assumed-competitor-score", type=float, default=2000)
@@ -55,6 +58,9 @@ def main() -> None:
         max_unpaired_per_market=args.max_unpaired_per_market,
         max_total_unpaired=args.max_total_unpaired,
         max_cluster_unpaired=args.max_cluster_unpaired,
+        enable_rescue_quotes=not args.disable_rescue_quotes,
+        rescue_min_pair_edge_per_share=args.rescue_min_pair_edge_per_share,
+        rescue_quote_offset=args.rescue_quote_offset,
         exit_loss_cents=args.exit_loss_cents,
         max_unpaired_minutes=args.max_unpaired_minutes,
         assumed_competitor_score=args.assumed_competitor_score,
