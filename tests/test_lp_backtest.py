@@ -34,6 +34,7 @@ from polymarket_lp.risk_governor import RiskGovernorConfig, evaluate_risk_govern
 from polymarket_lp.completion import evaluate_completion_audit
 from polymarket_lp.governed_config import apply_risk_governor_to_lp_config
 from polymarket_lp.hedge import HedgeFeasibilityConfig, evaluate_hedge_feasibility
+from polymarket_lp.rescue_stress import RescueStressConfig, evaluate_rescue_stress
 from scripts.paper_replay import make_lp_config
 from scripts.update_target_status import _bootstrap_target_from_quotes, _capture_stress_grid, _json_safe
 from scripts.target_config_grid import SelectionConfig, _candidate_row
@@ -158,6 +159,76 @@ def test_simulate_lp_uses_rescue_quote_to_complete_one_sided_inventory() -> None
     assert float(summary.iloc[0]["total_pair_spread_pnl_usdc"]) >= 0.10 - 1e-12
     assert int(summary.iloc[0]["rescue_quote_count"]) >= 1
     assert float(summary.iloc[0]["pair_completion_ratio_of_opened_shares"]) == 1.0
+
+
+def test_rescue_stress_passes_when_opposite_price_can_lock_pair_edge() -> None:
+    quotes = pd.DataFrame(
+        [
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m1",
+                "side": "YES",
+                "bid_price": 0.45,
+                "size_shares": 10,
+                "quote_offset": 0.05,
+                "cluster": "economics",
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m1",
+                "side": "NO",
+                "bid_price": 0.50,
+                "size_shares": 10,
+                "quote_offset": 0.05,
+                "cluster": "economics",
+            },
+        ]
+    )
+    result = evaluate_rescue_stress(
+        quotes,
+        RescueStressConfig(
+            rescue_min_pair_edge_per_share=0.01,
+            rescue_quote_offset=0.005,
+            min_price_feasible_rate=1.0,
+        ),
+    )
+    assert result["status"] == "rescue_stress_passed"
+    assert result["metrics"]["price_feasible_rate"] == 1.0
+    assert result["metrics"]["latest_blocked_loss_to_zero"] == 0.0
+
+
+def test_rescue_stress_blocks_unrescueable_one_sided_loss() -> None:
+    quotes = pd.DataFrame(
+        [
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m1",
+                "side": "YES",
+                "bid_price": 0.995,
+                "size_shares": 100,
+                "quote_offset": 0.0,
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m1",
+                "side": "NO",
+                "bid_price": 0.001,
+                "size_shares": 100,
+                "quote_offset": 0.0,
+            },
+        ]
+    )
+    result = evaluate_rescue_stress(
+        quotes,
+        RescueStressConfig(
+            initial_capital=2000,
+            rescue_min_pair_edge_per_share=0.01,
+            max_latest_blocked_loss_fraction=0.01,
+        ),
+    )
+    assert result["status"] == "rescue_stress_failed"
+    assert result["metrics"]["latest_blocked_loss_to_zero"] >= 99.5
+    assert not result["gates"]["latest_blocked_loss_gate_passed"]
 
 
 def test_synthetic_backtest_outputs_core_metrics() -> None:
