@@ -90,6 +90,10 @@ def test_paper_quotes_preserve_clob_depth_fields() -> None:
                 "max_incentive_spread": 0.05,
                 "min_incentive_size": 10.0,
                 "market_competitiveness": 0.1,
+                "yes_best_bid": 0.51,
+                "yes_best_ask": 0.53,
+                "no_best_bid": 0.47,
+                "no_best_ask": 0.49,
                 "yes_best_bid_size": 123.0,
                 "yes_best_ask_size": 45.0,
                 "no_best_bid_size": 67.0,
@@ -102,7 +106,9 @@ def test_paper_quotes_preserve_clob_depth_fields() -> None:
     assert set(["yes_best_bid_size", "yes_best_ask_size", "no_best_bid_size", "no_best_ask_size"]).issubset(
         quotes.columns
     )
+    assert set(["yes_best_bid", "yes_best_ask", "no_best_bid", "no_best_ask"]).issubset(quotes.columns)
     assert quotes["yes_best_bid_size"].iloc[0] == 123.0
+    assert quotes["yes_best_ask"].iloc[0] == 0.53
 
 
 def test_handle_fill_pairs_opposite_inventory() -> None:
