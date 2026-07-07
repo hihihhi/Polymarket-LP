@@ -25,6 +25,10 @@ class RescueStressConfig:
     min_price_feasible_rate: float = 0.95
     max_latest_blocked_loss_fraction: float = 0.05
     max_immediate_exit_loss_fraction: float = 0.02
+    require_taker_rescue_depth: bool = False
+    taker_rescue_min_pair_edge_per_share: float = 0.0
+    min_taker_rescue_depth_fraction: float = 1.0
+    min_taker_rescue_feasible_rate: float = 0.80
 
 
 def evaluate_rescue_stress(quotes: pd.DataFrame, cfg: RescueStressConfig | None = None) -> dict[str, Any]:
@@ -65,6 +69,10 @@ def evaluate_rescue_stress(quotes: pd.DataFrame, cfg: RescueStressConfig | None 
     latest_exit_loss = float(latest_market["immediate_exit_loss_if_rescue_fails"].sum()) if not latest_market.empty else 0.0
     p05_edge = _quantile(scenarios.loc[feasible, "pair_edge_per_share"], 0.05)
     min_edge = _finite_min(scenarios.loc[feasible, "pair_edge_per_share"])
+    taker_known = scenarios["taker_rescue_has_book"].astype(bool)
+    taker_feasible = scenarios["taker_rescue_feasible"].astype(bool)
+    taker_edge = scenarios.loc[taker_known, "taker_pair_edge_per_share"]
+    taker_rate = float(taker_feasible[taker_known].mean()) if bool(taker_known.any()) else math.nan
     loss_weighted_feasible = (
         float(loss[feasible].sum() / loss.sum()) if float(loss.sum()) > 0 else math.nan
     )
@@ -87,6 +95,10 @@ def evaluate_rescue_stress(quotes: pd.DataFrame, cfg: RescueStressConfig | None 
         if cfg.initial_capital > 0
         else math.inf,
         "latest_rescueable_loss_to_zero": max(0.0, latest_worst_loss - latest_blocked_loss),
+        "taker_rescue_book_scenarios": int(taker_known.sum()),
+        "taker_rescue_feasible_rate": taker_rate,
+        "taker_rescue_min_pair_edge_per_share": _finite_min(taker_edge),
+        "taker_rescue_min_depth_fraction": _finite_min(scenarios.loc[taker_known, "taker_depth_fraction"]),
     }
     gates = {
         "price_feasible_rate_passed": metrics["price_feasible_rate"] >= cfg.min_price_feasible_rate,
@@ -95,6 +107,12 @@ def evaluate_rescue_stress(quotes: pd.DataFrame, cfg: RescueStressConfig | None 
         "immediate_exit_loss_gate_passed": metrics["latest_immediate_exit_loss_fraction"]
         <= cfg.max_immediate_exit_loss_fraction,
         "pair_edge_gate_passed": min_edge >= cfg.rescue_min_pair_edge_per_share - 1e-12,
+        "taker_rescue_depth_gate_passed": (not cfg.require_taker_rescue_depth)
+        or (
+            metrics["taker_rescue_book_scenarios"] > 0
+            and math.isfinite(taker_rate)
+            and taker_rate >= cfg.min_taker_rescue_feasible_rate
+        ),
     }
     gates["rescue_stress_passed"] = bool(all(gates.values()))
     return {
@@ -107,6 +125,10 @@ def evaluate_rescue_stress(quotes: pd.DataFrame, cfg: RescueStressConfig | None 
         "status": "rescue_stress_passed" if gates["rescue_stress_passed"] else "rescue_stress_failed",
         "interpretation": {
             "proof_type": "price-feasible rescue stress, not executable fill proof",
+            "taker_rescue_note": (
+                "When CLOB top-book fields are present, taker rescue checks whether the opposite "
+                "best ask has enough displayed size and pair edge for an emergency complete-set lock."
+            ),
             "requires_for_deployment": [
                 "real order/fill/cancel telemetry",
                 "queue position or fill-probability model",
@@ -155,6 +177,8 @@ def _scenario_frame(q: pd.DataFrame, cfg: RescueStressConfig) -> pd.DataFrame:
             entry = float(row["bid_price"])
             size = float(row["size_shares"])
             opp_bid = float(opp["bid_price"])
+            opp_ask = _side_col_float(row, opp_side, "best_ask")
+            opp_ask_size = _side_col_float(row, opp_side, "best_ask_size")
             opp_mid_est = opp_bid + float(opp.get("quote_offset", 0.0))
             max_rescue_bid = 1.0 - entry - cfg.rescue_min_pair_edge_per_share
             post_only_rescue_bid = opp_mid_est - cfg.rescue_quote_offset
@@ -167,6 +191,12 @@ def _scenario_frame(q: pd.DataFrame, cfg: RescueStressConfig) -> pd.DataFrame:
             )
             pair_cost = entry + rescue_bid if feasible else math.nan
             edge = 1.0 - pair_cost if feasible else math.nan
+            taker_pair_cost = entry + opp_ask if math.isfinite(opp_ask) else math.nan
+            taker_edge = 1.0 - taker_pair_cost if math.isfinite(taker_pair_cost) else math.nan
+            depth_fraction = opp_ask_size / size if size > 0 and math.isfinite(opp_ask_size) else math.nan
+            taker_has_book = math.isfinite(opp_ask) and math.isfinite(opp_ask_size)
+            taker_depth_ok = taker_has_book and depth_fraction >= cfg.min_taker_rescue_depth_fraction
+            taker_edge_ok = taker_has_book and taker_edge >= cfg.taker_rescue_min_pair_edge_per_share - 1e-12
             rows.append(
                 {
                     "timestamp": ts,
@@ -184,9 +214,26 @@ def _scenario_frame(q: pd.DataFrame, cfg: RescueStressConfig) -> pd.DataFrame:
                     "pair_edge_per_share": edge,
                     "rescue_price_feasible": bool(feasible and edge >= cfg.rescue_min_pair_edge_per_share - 1e-12),
                     "immediate_exit_loss": size * cfg.exit_slippage,
+                    "taker_opposite_best_ask": opp_ask if taker_has_book else math.nan,
+                    "taker_opposite_best_ask_size": opp_ask_size if taker_has_book else math.nan,
+                    "taker_pair_cost": taker_pair_cost,
+                    "taker_pair_edge_per_share": taker_edge,
+                    "taker_depth_fraction": depth_fraction,
+                    "taker_rescue_has_book": bool(taker_has_book),
+                    "taker_rescue_depth_feasible": bool(taker_depth_ok),
+                    "taker_rescue_edge_feasible": bool(taker_edge_ok),
+                    "taker_rescue_feasible": bool(taker_depth_ok and taker_edge_ok),
                 }
             )
     return pd.DataFrame(rows)
+
+
+def _side_col_float(row: pd.Series, side: str, suffix: str) -> float:
+    key = f"{side.lower()}_{suffix}"
+    try:
+        return float(row.get(key, math.nan))
+    except (TypeError, ValueError):
+        return math.nan
 
 
 def _latest_market_row(group: pd.DataFrame) -> dict[str, Any]:
@@ -214,6 +261,7 @@ def _blockers(gates: dict[str, bool], cfg: RescueStressConfig) -> list[str]:
             f"immediate exit slippage exceeds {cfg.max_immediate_exit_loss_fraction:.0%} of capital"
         ),
         "pair_edge_gate_passed": "rescued pair edge below configured minimum",
+        "taker_rescue_depth_gate_passed": "taker rescue top-book depth/edge feasibility below requirement",
     }
     return [msg for gate, msg in labels.items() if not gates.get(gate, False)]
 

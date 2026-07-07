@@ -1346,6 +1346,45 @@ def test_completion_audit_requires_rescue_stress_when_enabled() -> None:
     assert "rescue stress is not passed" in result["blockers"]
 
 
+def test_rescue_stress_reports_taker_depth_feasibility() -> None:
+    quotes = pd.DataFrame(
+        [
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "side": "YES",
+                "bid_price": 0.40,
+                "size_shares": 100,
+                "quote_offset": 0.02,
+                "yes_best_ask": 0.43,
+                "yes_best_ask_size": 100,
+                "no_best_ask": 0.58,
+                "no_best_ask_size": 120,
+            },
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "side": "NO",
+                "bid_price": 0.55,
+                "size_shares": 100,
+                "quote_offset": 0.02,
+                "yes_best_ask": 0.43,
+                "yes_best_ask_size": 100,
+                "no_best_ask": 0.58,
+                "no_best_ask_size": 120,
+            },
+        ]
+    )
+    result = evaluate_rescue_stress(
+        quotes,
+        RescueStressConfig(require_taker_rescue_depth=True, min_taker_rescue_feasible_rate=1.0),
+    )
+    assert result["status"] == "rescue_stress_passed"
+    assert result["metrics"]["taker_rescue_book_scenarios"] == 2
+    assert result["metrics"]["taker_rescue_feasible_rate"] == 1.0
+    assert result["gates"]["taker_rescue_depth_gate_passed"]
+
+
 def test_governed_config_applies_risk_governor_size_and_cash_cap() -> None:
     cfg = LPConfig(quote_size_shares=800, active_capital_limit=1900)
     governed, meta = apply_risk_governor_to_lp_config(
