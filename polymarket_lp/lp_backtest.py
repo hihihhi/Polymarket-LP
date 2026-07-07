@@ -85,27 +85,85 @@ def _csv_set(value: str | None) -> set[str]:
     return {part.strip().lower() for part in str(value).split(",") if part.strip()}
 
 
+DEFAULT_EXCLUSION_ALIASES = {
+    "sports": {
+        "sports",
+        "sport",
+        "nba",
+        "nfl",
+        "mlb",
+        "nhl",
+        "wnba",
+        "soccer",
+        "football",
+        "basketball",
+        "baseball",
+        "hockey",
+        "tennis",
+        "golf",
+        "mma",
+        "ufc",
+        "boxing",
+        "f1",
+        "formula-1",
+        "motorsports",
+        "olympics",
+    },
+    "crypto": {
+        "crypto",
+        "cryptocurrency",
+        "bitcoin",
+        "btc",
+        "ethereum",
+        "eth",
+        "solana",
+        "sol",
+        "xrp",
+        "doge",
+        "memecoin",
+    },
+}
+
+
+def _expanded_category_set(values: set[str]) -> set[str]:
+    expanded = set(values)
+    for value in values:
+        expanded.update(DEFAULT_EXCLUSION_ALIASES.get(value, set()))
+    return expanded
+
+
+def _row_category_tokens(df: pd.DataFrame) -> pd.Series:
+    cols = [col for col in ["category", "cluster", "tags"] if col in df.columns]
+    if not cols:
+        return pd.Series(["unknown"] * len(df), index=df.index)
+    tokens = pd.Series("", index=df.index, dtype="object")
+    for col in cols:
+        tokens = tokens.str.cat(df[col].fillna("").astype(str).str.lower(), sep=",")
+    return tokens.str.replace(r"[^a-z0-9]+", ",", regex=True).str.strip(",")
+
+
 def filter_snapshots_for_strategy(snapshots: pd.DataFrame, cfg: LPConfig) -> pd.DataFrame:
     """Apply portfolio-level market filters before quoting.
 
     The default mandate intentionally avoids sports and crypto-style high-volatility
-    clusters. This is not a data-mined truth; it is a risk-control default for the
-    LP strategy because one-sided fills dominate rewards in jumpy markets.
+    clusters, including subcategories such as NBA/BTC. This is not a data-mined
+    truth; it is a risk-control default for the LP strategy because one-sided
+    fills dominate rewards in jumpy markets.
     """
     df = snapshots.copy()
     if "reward_daily" in df:
         df = df[pd.to_numeric(df["reward_daily"], errors="coerce").fillna(0) >= cfg.min_reward_daily]
     if "market_competitiveness" in df:
         df = df[pd.to_numeric(df["market_competitiveness"], errors="coerce").fillna(1) <= cfg.max_market_competitiveness]
-    if "category" in df:
-        cat = df["category"].fillna("unknown").astype(str).str.lower()
-        allowed = _csv_set(cfg.allowed_categories)
-        excluded = _csv_set(cfg.excluded_categories)
+    if any(col in df.columns for col in ["category", "cluster", "tags"]):
+        token_text = _row_category_tokens(df)
+        allowed = _expanded_category_set(_csv_set(cfg.allowed_categories))
+        excluded = _expanded_category_set(_csv_set(cfg.excluded_categories))
         if allowed:
-            df = df[cat.isin(allowed)]
-            cat = df["category"].fillna("unknown").astype(str).str.lower()
+            df = df[token_text.apply(lambda text: bool(set(text.split(",")) & allowed))]
+            token_text = _row_category_tokens(df)
         if excluded:
-            df = df[~cat.isin(excluded)]
+            df = df[~token_text.apply(lambda text: bool(set(text.split(",")) & excluded))]
     return df.reset_index(drop=True)
 
 

@@ -42,6 +42,9 @@ This is the metric stack for a managed-risk LP/reward-farming strategy. The key 
 | `adverse_selection_bps` | Price move after fill against our side | Must be tracked by market/category |
 | `cancel_latency_ms` | Request-to-confirm cancel latency | Critical for avoiding toxic fills |
 | `stale_quote_fill_rate` | Fills after signal/cancel should have happened | Kill-switch metric |
+| `pending_quote_rate` | Latest paper quotes without a later snapshot yet | Separates unfinished observations from stale quotes |
+| `fill_proxy_rate` | Paper quotes whose next midpoint crossed through bid | Pre-live proxy; replace with actual fills once paper/live order logs exist |
+| `mark_to_next_pnl_if_filled` | MTM P&L if the midpoint-cross proxy filled | Measures adverse selection before real fills exist |
 | `post_only_reject_rate` | Invalid/crossing order attempts | Bot health |
 
 ## 4. Inventory-risk metrics
@@ -124,5 +127,7 @@ For a $2,000 bankroll, do not scale unless the live/paper backtest shows:
 | L3 full orderbook replay | WebSocket L2 book snapshots + trades + rewards | strong |
 | L4 paper trading | your actual quotes/cancels/fills + rewards | strongest pre-live |
 | L5 tiny live | real fills/rewards with $200–$500 | production proof |
+
+Current public live paper analytics are between L2 and L4: they use actual public reward snapshots and intended quotes, but fill outcomes remain midpoint-cross proxies until signed paper/live orders produce real fills, cancels, and reward captures.
 
 Do not trust any LP backtest that lacks a mark-to-market inventory curve and one-sided-fill accounting.

@@ -35,6 +35,8 @@ The repo includes an L0/L1-style backtest scaffold:
 - synthetic stress backtest for sanity checks;
 - snapshot replay backtest once point-in-time market/orderbook data is collected;
 - paper replay that writes intended quote rows from snapshots;
+- public live snapshot paper loop with a no-orders safety manifest;
+- paper quote outcome analytics against the next observed snapshot;
 - reward-share approximation using market reward pool, max spread, min size, quote distance, and competitor score;
 - reward-density ranking;
 - volatility and recent-jump gates;
@@ -132,6 +134,29 @@ python scripts/paper_replay.py \
 
 This writes intended quotes only. It does not sign orders, submit orders, cancel orders, or touch private keys.
 
+To collect public live snapshots and paper quote intents without placing orders:
+
+```bash
+python scripts/paper_replay.py \
+  --live \
+  --iterations 288 \
+  --interval-seconds 300 \
+  --snapshot-out data/raw/live_lp_snapshots.csv \
+  --out data/processed/live_lp_quotes.csv \
+  --manifest-out data/raw/live_lp_paper_manifest.json
+```
+
+Then analyze the paper quotes against the next observed snapshot:
+
+```bash
+python scripts/paper_analyze.py \
+  --snapshots data/raw/live_lp_snapshots.csv \
+  --quotes data/processed/live_lp_quotes.csv \
+  --out-dir data/processed/live_lp_paper_analysis
+```
+
+This analysis reports fill-proxy, stale-fill, pending-quote, active-notional, and mark-to-next diagnostics. It is still paper analytics, not executed fill proof.
+
 ## Run with real snapshots
 
 ```bash
@@ -200,6 +225,9 @@ max_open_inventory_notional
 avg_open_inventory_notional
 reward_per_dollar_avg_inventory
 pnl_per_dollar_avg_inventory
+stale_fill_rate
+pending_quote_rate
+fill_proxy_rate
 profit_factor_trading_only
 daily_sortino_mtm
 bad_day_p95_return

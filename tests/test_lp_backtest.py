@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import argparse
+import json
+
 import pandas as pd
 
 from polymarket_lp.lp_backtest import (
@@ -10,6 +13,30 @@ from polymarket_lp.lp_backtest import (
     quote_for_row,
     simulate_lp,
 )
+from polymarket_lp.paper import (
+    LiveSnapshotConfig,
+    PaperAnalysisConfig,
+    analyze_paper_quotes,
+    build_paper_quotes,
+    collect_live_reward_snapshots,
+    run_live_paper_loop,
+    run_paper_analysis_to_files,
+)
+from polymarket_lp.target import TargetMonitorConfig, target_monitor_from_summary
+from polymarket_lp.telemetry import ExecutionTelemetryConfig, audit_execution_telemetry
+from polymarket_lp.deployment_gate import DeploymentReadinessConfig, evaluate_deployment_readiness
+from polymarket_lp.capital_risk import CapitalRiskStressConfig, evaluate_capital_risk_stress
+from polymarket_lp.allocation import AllocationSelectionConfig, select_allocation
+from polymarket_lp.proof import ObjectiveProofConfig, evaluate_objective_proof
+from polymarket_lp.sustainability import SustainabilityStressConfig, evaluate_sustainability_stress
+from polymarket_lp.risk_governor import RiskGovernorConfig, evaluate_risk_governor
+from polymarket_lp.completion import evaluate_completion_audit
+from polymarket_lp.governed_config import apply_risk_governor_to_lp_config
+from polymarket_lp.hedge import HedgeFeasibilityConfig, evaluate_hedge_feasibility
+from scripts.paper_replay import make_lp_config
+from scripts.update_target_status import _bootstrap_target_from_quotes, _capture_stress_grid, _json_safe
+from scripts.target_config_grid import SelectionConfig, _candidate_row
+from scripts.rolling_target_windows import _time_windows
 
 
 def test_quote_enforces_pair_safety() -> None:
@@ -81,3 +108,1139 @@ def test_default_filter_excludes_sports_and_crypto() -> None:
     filtered = filter_snapshots_for_strategy(snapshots, LPConfig())
     assert not set(filtered["category"].str.lower()).intersection({"sports", "crypto"})
     assert len(filtered) < len(snapshots)
+
+
+def test_default_filter_excludes_sports_and_crypto_subcategories() -> None:
+    snapshots = pd.DataFrame(
+        [
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "nba", "category": "nba", "cluster": "nba", "reward_daily": 100, "max_incentive_spread": 0.05, "min_incentive_size": 20, "yes_mid": 0.5},
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "btc", "category": "markets", "cluster": "bitcoin", "tags": "btc,crypto", "reward_daily": 100, "max_incentive_spread": 0.05, "min_incentive_size": 20, "yes_mid": 0.5},
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "fed", "category": "economic-policy", "cluster": "economic-policy", "reward_daily": 100, "max_incentive_spread": 0.05, "min_incentive_size": 20, "yes_mid": 0.5},
+        ]
+    )
+    filtered = filter_snapshots_for_strategy(snapshots, LPConfig())
+    assert filtered["condition_id"].tolist() == ["fed"]
+
+
+def test_build_paper_quotes_emits_two_sided_intents() -> None:
+    snapshots = pd.DataFrame(
+        [
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "market_id": "market-1",
+                "question": "Will this test pass?",
+                "category": "politics",
+                "cluster": "politics",
+                "yes_mid": 0.52,
+                "no_mid": 0.48,
+                "reward_daily": 100.0,
+                "max_incentive_spread": 0.05,
+                "min_incentive_size": 20.0,
+                "market_competitiveness": 0.2,
+            }
+        ]
+    )
+    quotes = build_paper_quotes(
+        snapshots,
+        LPConfig(
+            quote_size_shares=25,
+            quote_offset=0.02,
+            active_capital_limit=100,
+            min_reward_density_per_day=0,
+        ),
+    )
+    assert list(quotes["side"]) == ["YES", "NO"]
+    assert quotes["active_order_notional_pair"].max() <= 100
+    assert quotes["pair_cost"].max() <= 1 - LPConfig().safety_margin
+
+
+def test_collect_live_reward_snapshots_parses_gamma_fixture() -> None:
+    def fake_get_json(url: str, params: dict[str, object] | None, timeout: float) -> object:
+        assert url.endswith("/events")
+        return [
+            {
+                "id": "event-1",
+                "category": "Politics",
+                "tags": [{"slug": "election"}],
+                "markets": [
+                    {
+                        "id": "market-1",
+                        "conditionId": "condition-1",
+                        "question": "Will fixture parse?",
+                        "clobRewards": [{"rewardsDailyRate": "12.5"}],
+                        "rewardsMaxSpread": "4",
+                        "rewardsMinSize": "20",
+                        "acceptingOrders": True,
+                        "enableOrderBook": True,
+                        "clobTokenIds": '["yes-token","no-token"]',
+                        "bestBid": "0.48",
+                        "bestAsk": "0.52",
+                        "lastTradePrice": "0.50",
+                        "spread": "0.02",
+                        "liquidityClob": "1000",
+                        "volume24hrClob": "500",
+                        "outcomes": '["Yes","No"]',
+                    }
+                ],
+            }
+        ]
+
+    snapshots = collect_live_reward_snapshots(
+        LiveSnapshotConfig(max_events=1),
+        now=pd.Timestamp("2026-01-01T00:00:00Z"),
+        get_json=fake_get_json,
+    )
+    assert len(snapshots) == 1
+    row = snapshots.iloc[0]
+    assert row["condition_id"] == "condition-1"
+    assert row["reward_daily"] == 12.5
+    assert row["max_incentive_spread"] == 0.04
+    assert row["quote_data_quality"] == "gamma_best_bid_ask"
+
+
+def test_run_live_paper_loop_writes_manifest_without_orders(tmp_path) -> None:
+    def fake_get_json(url: str, params: dict[str, object] | None, timeout: float) -> object:
+        return [
+            {
+                "id": "event-1",
+                "category": "Politics",
+                "markets": [
+                    {
+                        "id": "market-1",
+                        "conditionId": "condition-1",
+                        "question": "Will manifest write?",
+                        "clobRewards": [{"rewardsDailyRate": "100"}],
+                        "rewardsMaxSpread": "5",
+                        "rewardsMinSize": "20",
+                        "acceptingOrders": True,
+                        "enableOrderBook": True,
+                        "bestBid": "0.49",
+                        "bestAsk": "0.51",
+                        "lastTradePrice": "0.50",
+                        "spread": "0.02",
+                    }
+                ],
+            }
+        ]
+
+    manifest = run_live_paper_loop(
+        snapshot_path=tmp_path / "snapshots.csv",
+        quotes_path=tmp_path / "quotes.csv",
+        manifest_path=tmp_path / "manifest.json",
+        lp_config=LPConfig(quote_size_shares=25, quote_offset=0.02, active_capital_limit=100),
+        snapshot_config=LiveSnapshotConfig(max_events=1),
+        iterations=1,
+        interval_seconds=0,
+        get_json=fake_get_json,
+    )
+    assert manifest["iterations_completed"] == 1
+    assert manifest["paper_quote_rows"] == 2
+    assert "paper only" in manifest["safety"]
+    assert (tmp_path / "snapshots.csv").exists()
+    assert (tmp_path / "quotes.csv").exists()
+
+
+def test_analyze_paper_quotes_uses_next_snapshot_fill_proxy() -> None:
+    snapshots = pd.DataFrame(
+        [
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "yes_mid": 0.52,
+                "no_mid": 0.48,
+                "reward_daily": 100,
+                "max_incentive_spread": 0.05,
+                "min_incentive_size": 20,
+                "cluster": "politics",
+            },
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:05:00Z"),
+                "condition_id": "m1",
+                "yes_mid": 0.49,
+                "no_mid": 0.51,
+                "reward_daily": 100,
+                "max_incentive_spread": 0.05,
+                "min_incentive_size": 20,
+                "cluster": "politics",
+            },
+        ]
+    )
+    quotes = pd.DataFrame(
+        [
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "side": "YES",
+                "bid_price": 0.50,
+                "size_shares": 25,
+                "active_order_notional_pair": 24,
+                "reward_density_per_day": 0.1,
+                "cluster": "politics",
+            },
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "side": "NO",
+                "bid_price": 0.46,
+                "size_shares": 25,
+                "active_order_notional_pair": 24,
+                "reward_density_per_day": 0.1,
+                "cluster": "politics",
+            },
+        ]
+    )
+    per_quote, summary = analyze_paper_quotes(snapshots, quotes, PaperAnalysisConfig(stale_mid_change=0.025))
+    yes = per_quote[per_quote["side"].eq("YES")].iloc[0]
+    no = per_quote[per_quote["side"].eq("NO")].iloc[0]
+    assert bool(yes["would_fill"])
+    assert not bool(no["would_fill"])
+    assert bool(yes["stale_fill"])
+    assert summary["would_fill_rows"] == 1
+    assert summary["stale_fill_rows"] == 1
+    assert summary["estimated_mark_to_next_pnl_if_all_fills_usdc"] < 0
+
+
+def test_analyze_paper_quotes_excludes_latest_right_censored_pending_from_quality_rate() -> None:
+    snapshots = pd.DataFrame(
+        [
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "yes_mid": 0.52,
+                "no_mid": 0.48,
+                "reward_daily": 100,
+                "max_incentive_spread": 0.05,
+                "min_incentive_size": 20,
+            },
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:05:00Z"),
+                "condition_id": "m1",
+                "yes_mid": 0.52,
+                "no_mid": 0.48,
+                "reward_daily": 100,
+                "max_incentive_spread": 0.05,
+                "min_incentive_size": 20,
+            },
+        ]
+    )
+    quotes = pd.DataFrame(
+        [
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "side": "YES",
+                "bid_price": 0.50,
+                "size_shares": 25,
+                "active_order_notional_pair": 24,
+                "reward_density_per_day": 0.1,
+            },
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "side": "NO",
+                "bid_price": 0.46,
+                "size_shares": 25,
+                "active_order_notional_pair": 24,
+                "reward_density_per_day": 0.1,
+            },
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:05:00Z"),
+                "condition_id": "m1",
+                "side": "YES",
+                "bid_price": 0.50,
+                "size_shares": 25,
+                "active_order_notional_pair": 24,
+                "reward_density_per_day": 0.1,
+            },
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:05:00Z"),
+                "condition_id": "m1",
+                "side": "NO",
+                "bid_price": 0.46,
+                "size_shares": 25,
+                "active_order_notional_pair": 24,
+                "reward_density_per_day": 0.1,
+            },
+        ]
+    )
+    _, summary = analyze_paper_quotes(snapshots, quotes)
+    assert summary["raw_pending_quote_rate"] == 0.5
+    assert summary["pending_quote_rate"] == 0.0
+    assert summary["evaluable_quote_rows"] == 2
+    assert summary["right_censored_pending_quote_rows"] == 2
+
+
+def test_run_paper_analysis_to_files_writes_summary(tmp_path) -> None:
+    snapshots = make_synthetic_snapshots(seed=3, days=1, n_markets=3)
+    quotes = build_paper_quotes(snapshots, LPConfig(quote_size_shares=25, quote_offset=0.025, active_capital_limit=200))
+    summary = run_paper_analysis_to_files(snapshots=snapshots, quotes=quotes, out_dir=tmp_path)
+    assert summary["snapshot_rows"] == len(snapshots)
+    assert "paper analytics only" in summary["safety"]
+    assert (tmp_path / "paper_summary.json").exists()
+    assert (tmp_path / "paper_quote_outcomes.csv").exists()
+
+
+def test_target_monitor_separates_density_from_deployment_proof() -> None:
+    summary = {
+        "duration_hours": 12,
+        "quote_rows": 24,
+        "estimated_reward_accrual_usdc": 40,
+        "avg_active_pair_notional": 1500,
+        "fill_proxy_rate": 0,
+        "stale_fill_rate": 0,
+    }
+    result = target_monitor_from_summary(
+        summary,
+        TargetMonitorConfig(
+            target_monthly_usdc=1000,
+            reward_to_loss_haircut=8,
+            min_observation_hours=24,
+            paid_reward_verified=False,
+        ),
+    )
+    assert result["gates"]["density_gate_passed"]
+    assert result["gates"]["capture_gate_passed"]
+    assert not result["gates"]["sample_gate_passed"]
+    assert not result["gates"]["deployment_proof_passed"]
+    assert result["status"] == "target_density_passed_sample_too_short"
+
+
+def test_target_monitor_flags_concentration_when_required() -> None:
+    summary = {
+        "duration_hours": 30,
+        "quote_rows": 24,
+        "unique_markets_quoted": 1,
+        "estimated_reward_accrual_usdc": 100,
+        "avg_active_pair_notional": 1500,
+        "fill_proxy_rate": 0,
+        "stale_fill_rate": 0,
+    }
+    result = target_monitor_from_summary(
+        summary,
+        TargetMonitorConfig(target_monthly_usdc=1000, reward_to_loss_haircut=8, min_unique_markets=2),
+    )
+    assert result["gates"]["density_gate_passed"]
+    assert not result["gates"]["diversification_gate_passed"]
+    assert result["status"] == "diversification_failed"
+
+
+def test_target_monitor_flags_active_notional_limit() -> None:
+    summary = {
+        "duration_hours": 30,
+        "quote_rows": 24,
+        "unique_markets_quoted": 2,
+        "estimated_reward_accrual_usdc": 100,
+        "avg_active_pair_notional": 1500,
+        "max_active_pair_notional": 1700,
+        "fill_proxy_rate": 0,
+        "stale_fill_rate": 0,
+    }
+    result = target_monitor_from_summary(
+        summary,
+        TargetMonitorConfig(
+            target_monthly_usdc=1000,
+            reward_to_loss_haircut=8,
+            min_unique_markets=2,
+            max_active_pair_notional=1600,
+        ),
+    )
+    assert result["gates"]["diversification_gate_passed"]
+    assert not result["gates"]["active_notional_gate_passed"]
+    assert result["status"] == "active_notional_failed"
+
+
+def test_target_monitor_flags_pending_quote_quality() -> None:
+    summary = {
+        "duration_hours": 30,
+        "quote_rows": 24,
+        "unique_markets_quoted": 2,
+        "estimated_reward_accrual_usdc": 100,
+        "avg_active_pair_notional": 1500,
+        "max_active_pair_notional": 1500,
+        "fill_proxy_rate": 0,
+        "stale_fill_rate": 0,
+        "pending_quote_rate": 0.5,
+    }
+    result = target_monitor_from_summary(
+        summary,
+        TargetMonitorConfig(
+            target_monthly_usdc=1000,
+            reward_to_loss_haircut=8,
+            min_unique_markets=2,
+            max_pending_quote_rate=0.05,
+        ),
+    )
+    assert not result["gates"]["risk_proxy_gate_passed"]
+    assert result["status"] == "risk_proxy_failed"
+
+
+def test_target_bootstrap_reports_p05_target_gate() -> None:
+    quotes = pd.DataFrame(
+        [
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "side": "YES",
+                "reward_density_per_day": 1.0,
+                "active_order_notional_pair": 1000,
+            },
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "side": "NO",
+                "reward_density_per_day": 1.0,
+                "active_order_notional_pair": 1000,
+            },
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:05:00Z"),
+                "condition_id": "m1",
+                "side": "YES",
+                "reward_density_per_day": 1.0,
+                "active_order_notional_pair": 1000,
+            },
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:05:00Z"),
+                "condition_id": "m1",
+                "side": "NO",
+                "reward_density_per_day": 1.0,
+                "active_order_notional_pair": 1000,
+            },
+        ]
+    )
+    result = _bootstrap_target_from_quotes(
+        quotes,
+        cfg=TargetMonitorConfig(target_monthly_usdc=1000, reward_to_loss_haircut=8),
+        max_reward_gap_seconds=300,
+        resamples=50,
+        seed=1,
+        block_size=1,
+        capture_rate=0.5,
+        min_target_margin=1.0,
+    )
+    assert result["enabled"]
+    assert result["intervals"] == 1
+    assert result["net_monthly_p05"] > 1000
+    assert result["p05_target_gate_passed"]
+    assert result["captured_net_monthly_p05"] > 1000
+    assert result["captured_p05_target_gate_passed"]
+
+
+def test_capture_stress_grid_reports_target_breakpoint() -> None:
+    result = _capture_stress_grid(
+        {"enabled": True, "net_monthly_p05": 2400.0},
+        capture_rates=[0.35, 0.5],
+        target_monthly_usdc=1000,
+        min_target_margin=1.0,
+    )
+    assert result[0]["captured_net_monthly_p05"] == 840.0
+    assert not result[0]["target_gate_passed"]
+    assert result[1]["captured_net_monthly_p05"] == 1200.0
+    assert result[1]["target_gate_passed"]
+
+
+def test_json_safe_replaces_nonfinite_numbers() -> None:
+    result = _json_safe({"x": float("nan"), "y": [float("inf"), 1.0]})
+    assert result == {"x": None, "y": [None, 1.0]}
+
+
+def test_execution_telemetry_audit_proves_reward_and_cancel_capture() -> None:
+    orders = pd.DataFrame(
+        [
+            {"client_order_id": "o1", "created_ts": "2026-01-01T00:00:00Z"},
+            {"client_order_id": "o2", "created_ts": "2026-01-01T00:00:01Z"},
+        ]
+    )
+    fills = pd.DataFrame(
+        [
+            {"client_order_id": "o1", "fill_price": 0.4, "fill_size": 10, "fee_usdc": 0.01},
+        ]
+    )
+    cancels = pd.DataFrame(
+        [
+            {
+                "client_order_id": "o2",
+                "cancel_requested_ts": "2026-01-01T00:05:00Z",
+                "cancel_confirmed_ts": "2026-01-01T00:05:05Z",
+            }
+        ]
+    )
+    rewards = pd.DataFrame([{"estimated_reward_usdc": 10.0, "paid_reward_usdc": 6.0}])
+    result = audit_execution_telemetry(
+        orders=orders,
+        fills=fills,
+        cancels=cancels,
+        rewards=rewards,
+        cfg=ExecutionTelemetryConfig(
+            min_orders=2,
+            min_cancels=1,
+            min_reward_capture_rate=0.5,
+            max_cancel_latency_seconds=10,
+        ),
+    )
+    assert result["metrics"]["reward_capture_rate"] == 0.6
+    assert result["metrics"]["max_cancel_latency_seconds"] == 5
+    assert result["gates"]["deployment_telemetry_passed"]
+
+
+def test_execution_telemetry_audit_rejects_missing_paid_rewards() -> None:
+    result = audit_execution_telemetry(
+        orders=pd.DataFrame([{"client_order_id": "o1"}]),
+        cancels=pd.DataFrame(
+            [
+                {
+                    "client_order_id": "o1",
+                    "cancel_requested_ts": "2026-01-01T00:05:00Z",
+                    "cancel_confirmed_ts": "2026-01-01T00:05:01Z",
+                }
+            ]
+        ),
+        rewards=pd.DataFrame([{"estimated_reward_usdc": 10.0, "paid_reward_usdc": 0.0}]),
+    )
+    assert not result["gates"]["reward_payment_present"]
+    assert not result["gates"]["deployment_telemetry_passed"]
+
+
+def test_deployment_readiness_requires_sample_and_telemetry() -> None:
+    target_status = {
+        "paper_summary": {"duration_hours": 1, "unique_markets_quoted": 2, "max_active_pair_notional": 1500},
+        "target_monitor": {
+            "input": {
+                "duration_hours": 1,
+                "unique_markets_quoted": 2,
+                "max_active_pair_notional": 1500,
+                "fill_proxy_rate": 0,
+                "stale_fill_rate": 0,
+                "pending_quote_rate": 0,
+            },
+            "target_math": {"net_monthly_after_loss_haircut": 2500, "capture_needed_for_target": 0.4},
+            "gates": {
+                "density_gate_passed": True,
+                "capture_gate_passed": True,
+                "risk_proxy_gate_passed": True,
+                "diversification_gate_passed": True,
+                "active_notional_gate_passed": True,
+                "sample_gate_passed": False,
+            },
+        },
+        "bootstrap_target": {"net_monthly_p05": 2400, "intervals": 10},
+        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200}],
+    }
+    result = evaluate_deployment_readiness(target_status=target_status, cfg=DeploymentReadinessConfig())
+    assert result["gates"]["capture_stress_gate_passed"]
+    assert not result["gates"]["sample_gate_passed"]
+    assert not result["gates"]["telemetry_gate_passed"]
+    assert result["status"] == "deployment_not_ready"
+
+
+def test_deployment_readiness_passes_when_all_gates_pass() -> None:
+    target_status = {
+        "target_monitor": {
+            "input": {
+                "duration_hours": 25,
+                "unique_markets_quoted": 3,
+                "max_active_pair_notional": 1500,
+                "fill_proxy_rate": 0,
+                "stale_fill_rate": 0,
+                "pending_quote_rate": 0,
+            },
+            "target_math": {"net_monthly_after_loss_haircut": 2500, "capture_needed_for_target": 0.4},
+            "gates": {
+                "density_gate_passed": True,
+                "capture_gate_passed": True,
+                "risk_proxy_gate_passed": True,
+                "diversification_gate_passed": True,
+                "active_notional_gate_passed": True,
+                "sample_gate_passed": True,
+            },
+        },
+        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200}],
+    }
+    telemetry = {"gates": {"deployment_telemetry_passed": True}}
+    result = evaluate_deployment_readiness(target_status=target_status, telemetry_audit=telemetry)
+    assert result["gates"]["deployment_ready"]
+    assert result["blockers"] == []
+
+
+def test_deployment_readiness_blocks_pending_quotes() -> None:
+    target_status = {
+        "target_monitor": {
+            "input": {
+                "duration_hours": 25,
+                "unique_markets_quoted": 3,
+                "max_active_pair_notional": 1500,
+                "fill_proxy_rate": 0,
+                "stale_fill_rate": 0,
+                "pending_quote_rate": 0.5,
+            },
+            "target_math": {"net_monthly_after_loss_haircut": 2500, "capture_needed_for_target": 0.4},
+            "gates": {
+                "density_gate_passed": True,
+                "capture_gate_passed": True,
+                "risk_proxy_gate_passed": True,
+                "diversification_gate_passed": True,
+                "active_notional_gate_passed": True,
+                "sample_gate_passed": True,
+            },
+        },
+        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200}],
+    }
+    telemetry = {"gates": {"deployment_telemetry_passed": True}}
+    result = evaluate_deployment_readiness(target_status=target_status, telemetry_audit=telemetry)
+    assert not result["gates"]["pending_quote_gate_passed"]
+    assert not result["gates"]["deployment_ready"]
+
+
+def test_deployment_readiness_blocks_mid_move_risk() -> None:
+    target_status = {
+        "paper_summary": {"max_abs_mid_change_to_next": 0.02},
+        "target_monitor": {
+            "input": {
+                "duration_hours": 25,
+                "unique_markets_quoted": 3,
+                "max_active_pair_notional": 1500,
+                "fill_proxy_rate": 0,
+                "stale_fill_rate": 0,
+                "pending_quote_rate": 0,
+            },
+            "target_math": {"net_monthly_after_loss_haircut": 2500, "capture_needed_for_target": 0.4},
+            "gates": {
+                "density_gate_passed": True,
+                "capture_gate_passed": True,
+                "risk_proxy_gate_passed": True,
+                "diversification_gate_passed": True,
+                "active_notional_gate_passed": True,
+                "sample_gate_passed": True,
+            },
+        },
+        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200}],
+    }
+    telemetry = {"gates": {"deployment_telemetry_passed": True}}
+    result = evaluate_deployment_readiness(
+        target_status=target_status,
+        telemetry_audit=telemetry,
+        cfg=DeploymentReadinessConfig(max_abs_mid_change_to_next=0.003),
+    )
+    assert not result["gates"]["mid_move_gate_passed"]
+    assert not result["gates"]["deployment_ready"]
+
+
+def test_deployment_readiness_blocks_low_cash_reserve() -> None:
+    target_status = {
+        "target_monitor": {
+            "input": {
+                "duration_hours": 25,
+                "unique_markets_quoted": 3,
+                "max_active_pair_notional": 1900,
+                "fill_proxy_rate": 0,
+                "stale_fill_rate": 0,
+                "pending_quote_rate": 0,
+            },
+            "target_math": {"net_monthly_after_loss_haircut": 2500, "capture_needed_for_target": 0.4},
+            "gates": {
+                "density_gate_passed": True,
+                "capture_gate_passed": True,
+                "risk_proxy_gate_passed": True,
+                "diversification_gate_passed": True,
+                "active_notional_gate_passed": True,
+                "sample_gate_passed": True,
+            },
+        },
+        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200}],
+    }
+    telemetry = {"gates": {"deployment_telemetry_passed": True}}
+    result = evaluate_deployment_readiness(
+        target_status=target_status,
+        telemetry_audit=telemetry,
+        cfg=DeploymentReadinessConfig(
+            initial_capital=2000,
+            max_active_pair_notional=2000,
+            min_cash_reserve_fraction=0.2,
+        ),
+    )
+    assert not result["gates"]["cash_reserve_gate_passed"]
+    assert not result["gates"]["deployment_ready"]
+
+
+def test_target_config_grid_rejects_pending_and_midmove_risk() -> None:
+    summary = {
+        "quote_rows": 24,
+        "quote_pair_intervals": 12,
+        "unique_markets_quoted": 2,
+        "duration_hours": 1.0,
+        "avg_active_pair_notional": 1500,
+        "avg_reward_density_per_day": 0.1,
+        "estimated_reward_accrual_usdc": 10,
+        "fill_proxy_rate": 0,
+        "stale_fill_rate": 0,
+        "pending_quote_rate": 0.2,
+        "max_abs_mid_change_to_next": 0.01,
+    }
+    monitor = {"target_math": {"net_monthly_after_loss_haircut": 3000, "capture_needed_for_target": 1 / 3}}
+    bootstrap = {
+        "captured_net_monthly_p05": 1500,
+        "captured_p05_target_gate_passed": True,
+        "intervals": 12,
+        "net_monthly_p05": 3000,
+    }
+    row = _candidate_row(
+        0.02,
+        0.0256,
+        summary,
+        monitor,
+        bootstrap,
+        SelectionConfig(max_pending_quote_rate=0.05, max_abs_mid_change_to_next=0.003),
+    )
+    assert not row["selected_gate_passed"]
+    assert row["pending_quote_rate"] == 0.2
+
+
+def test_rolling_target_windows_are_fixed_length_and_step() -> None:
+    start = pd.Timestamp("2026-01-01T00:00:00Z")
+    end = pd.Timestamp("2026-01-01T03:00:00Z")
+    windows = _time_windows(start, end, window_hours=1.0, step_hours=0.5)
+    assert windows == [
+        (pd.Timestamp("2026-01-01T00:00:00Z"), pd.Timestamp("2026-01-01T01:00:00Z")),
+        (pd.Timestamp("2026-01-01T00:30:00Z"), pd.Timestamp("2026-01-01T01:30:00Z")),
+        (pd.Timestamp("2026-01-01T01:00:00Z"), pd.Timestamp("2026-01-01T02:00:00Z")),
+        (pd.Timestamp("2026-01-01T01:30:00Z"), pd.Timestamp("2026-01-01T02:30:00Z")),
+        (pd.Timestamp("2026-01-01T02:00:00Z"), pd.Timestamp("2026-01-01T03:00:00Z")),
+    ]
+
+
+def test_capital_risk_stress_reports_recovery_days() -> None:
+    quotes = pd.DataFrame(
+        [
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m1", "cluster": "macro", "side": "YES", "bid_price": 0.8, "size_shares": 100, "active_order_notional_pair": 95},
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m1", "cluster": "macro", "side": "NO", "bid_price": 0.15, "size_shares": 100, "active_order_notional_pair": 95},
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m2", "cluster": "macro", "side": "YES", "bid_price": 0.4, "size_shares": 100, "active_order_notional_pair": 95},
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m2", "cluster": "macro", "side": "NO", "bid_price": 0.55, "size_shares": 100, "active_order_notional_pair": 95},
+        ]
+    )
+    target_status = {"capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200.0}]}
+    result = evaluate_capital_risk_stress(quotes, target_status=target_status, cfg=CapitalRiskStressConfig())
+    assert result["metrics"]["all_active_unhedged_one_side_loss_to_zero"] == 135.0
+    assert result["metrics"]["configured_inventory_cap_loss_to_zero"] == 115.0
+    assert result["metrics"]["capped_recovery_days_at_p05_income"] == 115.0 / 40.0
+    assert result["gates"]["capital_risk_stress_passed"]
+
+
+def test_capital_risk_stress_blocks_total_ruin() -> None:
+    quotes = pd.DataFrame(
+        [
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": f"m{i}", "cluster": "macro", "side": "YES", "bid_price": 0.9, "size_shares": 1000, "active_order_notional_pair": 950}
+            for i in range(3)
+        ]
+    )
+    result = evaluate_capital_risk_stress(
+        quotes,
+        target_status={"capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1000.0}]},
+        cfg=CapitalRiskStressConfig(initial_capital=2000),
+    )
+    assert not result["gates"]["no_total_ruin_unhedged_gate_passed"]
+    assert not result["gates"]["capital_risk_stress_passed"]
+
+
+def test_allocation_selector_balances_income_and_survival() -> None:
+    rows = [
+        {
+            "qsize": 300,
+            "selected_gate_passed": True,
+            "capital_risk_stress_passed": True,
+            "unique_markets_quoted": 3,
+            "quote_offset": 0.02,
+            "min_reward_density_per_day": 0.10,
+            "net_monthly_after_loss_haircut": 4557,
+            "captured_net_monthly_p05": 1860,
+            "capture_needed_for_target": 0.22,
+            "cash_reserve_fraction": 0.568,
+            "unhedged_loss_to_zero": 689,
+            "unhedged_loss_fraction": 0.344,
+            "unhedged_recovery_days": 8.8,
+            "configured_cap_loss": 180,
+            "configured_cap_recovery_days": 2.3,
+            "max_abs_mid_change_to_next": 0.006,
+        },
+        {
+            "qsize": 800,
+            "selected_gate_passed": True,
+            "capital_risk_stress_passed": True,
+            "unique_markets_quoted": 2,
+            "quote_offset": 0.02,
+            "min_reward_density_per_day": 0.0256,
+            "net_monthly_after_loss_haircut": 8566,
+            "captured_net_monthly_p05": 3463,
+            "capture_needed_for_target": 0.117,
+            "cash_reserve_fraction": 0.233,
+            "unhedged_loss_to_zero": 1296,
+            "unhedged_loss_fraction": 0.648,
+            "unhedged_recovery_days": 16.6,
+            "configured_cap_loss": 120,
+            "configured_cap_recovery_days": 1.53,
+            "max_abs_mid_change_to_next": 0.006,
+        },
+    ]
+    result = select_allocation(rows, AllocationSelectionConfig())
+    assert result["status"] == "allocation_selected"
+    assert result["selected"]["metrics"]["qsize"] == 300
+    assert result["income_max"]["metrics"]["qsize"] == 800
+
+
+def test_allocation_selector_reports_no_pass_when_target_or_risk_fails() -> None:
+    rows = [
+        {
+            "qsize": 300,
+            "selected_gate_passed": True,
+            "capital_risk_stress_passed": True,
+            "unique_markets_quoted": 1,
+            "captured_net_monthly_p05": 900,
+            "cash_reserve_fraction": 0.2,
+            "unhedged_loss_fraction": 0.7,
+            "configured_cap_loss": 800,
+            "configured_cap_recovery_days": 12,
+            "max_abs_mid_change_to_next": 0.02,
+        }
+    ]
+    result = select_allocation(rows, AllocationSelectionConfig())
+    assert result["status"] == "no_allocation_passed"
+    assert result["blockers"]
+
+
+def test_objective_proof_requires_sample_rolling_telemetry_and_deployment() -> None:
+    evidence = {
+        "status": "proof_not_ready",
+        "gates": {
+            "income_50pct_p05_above_target": True,
+            "cash_reserve_passed": True,
+            "capital_stress_passed": True,
+            "sample_24h_passed": False,
+            "rolling_all_windows_passed": False,
+            "telemetry_passed": False,
+            "deployment_ready": False,
+        },
+        "income": {
+            "observation_hours": 1,
+            "p05_monthly_50pct_capture": 1800,
+            "net_monthly_after_loss_haircut": 3600,
+        },
+        "risk": {"cash_reserve_fraction": 0.56, "unhedged_loss_fraction_of_capital": 0.35},
+    }
+    allocation = {
+        "status": "allocation_selected",
+        "selected": {
+            "metrics": {
+                "qsize": 300,
+                "captured_net_monthly_p05": 1800,
+                "net_monthly_after_loss_haircut": 4500,
+                "cash_reserve_fraction": 0.56,
+                "unhedged_loss_fraction": 0.35,
+                "configured_cap_recovery_days": 3,
+            },
+            "gates": {
+                "unhedged_loss_gate_passed": True,
+                "configured_cap_recovery_gate_passed": True,
+            },
+        },
+    }
+    result = evaluate_objective_proof(evidence_packet=evidence, allocation_selection=allocation)
+    assert result["status"] == "objective_not_proven"
+    assert "needs >=24h public-paper observation" in result["blockers"]
+    assert "order/fill/cancel/paid-reward telemetry missing" in result["blockers"]
+
+
+def test_objective_proof_passes_when_all_required_gates_pass() -> None:
+    evidence = {
+        "status": "proof_ready",
+        "gates": {
+            "income_50pct_p05_above_target": True,
+            "cash_reserve_passed": True,
+            "capital_stress_passed": True,
+            "sample_24h_passed": True,
+            "rolling_all_windows_passed": True,
+            "telemetry_passed": True,
+            "deployment_ready": True,
+        },
+        "income": {
+            "observation_hours": 24,
+            "p05_monthly_50pct_capture": 1800,
+            "net_monthly_after_loss_haircut": 3600,
+        },
+        "risk": {"cash_reserve_fraction": 0.56, "unhedged_loss_fraction_of_capital": 0.35},
+    }
+    allocation = {
+        "status": "allocation_selected",
+        "selected": {
+            "metrics": {
+                "qsize": 300,
+                "captured_net_monthly_p05": 1800,
+                "net_monthly_after_loss_haircut": 4500,
+                "cash_reserve_fraction": 0.56,
+                "unhedged_loss_fraction": 0.35,
+                "configured_cap_recovery_days": 3,
+            },
+            "gates": {
+                "unhedged_loss_gate_passed": True,
+                "configured_cap_recovery_gate_passed": True,
+            },
+        },
+    }
+    result = evaluate_objective_proof(evidence_packet=evidence, allocation_selection=allocation)
+    assert result["status"] == "objective_proven"
+    assert result["blockers"] == []
+
+
+def test_sustainability_stress_passes_configured_cap_but_warns_unhedged_recovery() -> None:
+    evidence = {
+        "income": {"p05_monthly_raw": 3600.0},
+        "risk": {
+            "configured_inventory_cap_loss_to_zero": 180.0,
+            "all_active_unhedged_one_side_loss_to_zero": 720.0,
+        },
+    }
+    allocation = {
+        "status": "allocation_selected",
+        "selected": {
+            "metrics": {
+                "captured_net_monthly_p05": 1900.0,
+                "cash_reserve_fraction": 0.56,
+                "unhedged_loss_fraction": 0.36,
+                "configured_cap_loss": 180.0,
+                "unhedged_loss_to_zero": 720.0,
+            },
+        },
+    }
+    result = evaluate_sustainability_stress(
+        evidence_packet=evidence,
+        allocation_selection=allocation,
+        cfg=SustainabilityStressConfig(max_unhedged_recovery_days=10.0),
+    )
+    assert result["status"] == "sustainability_stress_passed"
+    assert result["gates"]["configured_cap_shock_income_passed"]
+    assert not result["gates"]["unhedged_recovery_warning_passed"]
+    assert result["metrics"]["breakeven_reward_multiplier_configured_cap_at_reference_capture"] < 0.75
+
+
+def test_sustainability_stress_fails_when_cap_loss_breaks_target() -> None:
+    evidence = {"income": {"p05_monthly_raw": 2200.0}, "risk": {"configured_inventory_cap_loss_to_zero": 250.0}}
+    allocation = {
+        "status": "allocation_selected",
+        "selected": {
+            "metrics": {
+                "captured_net_monthly_p05": 1100.0,
+                "cash_reserve_fraction": 0.50,
+                "unhedged_loss_fraction": 0.30,
+                "configured_cap_loss": 250.0,
+            },
+        },
+    }
+    result = evaluate_sustainability_stress(evidence_packet=evidence, allocation_selection=allocation)
+    assert result["status"] == "sustainability_stress_failed"
+    assert "configured-cap monthly loss shock drops p05 income below target" in result["blockers"]
+
+
+def test_risk_governor_continues_paper_when_risk_passes_but_proof_missing() -> None:
+    evidence = {
+        "income": {"p05_monthly_50pct_capture": 1900},
+        "risk": {
+            "max_active_pair_notional": 864,
+            "cash_reserve_fraction": 0.568,
+            "all_active_unhedged_one_side_loss_to_zero": 690,
+            "configured_inventory_cap_loss_to_zero": 180,
+            "configured_cap_recovery_days": 2.9,
+        },
+        "gates": {
+            "sample_24h_passed": False,
+            "rolling_all_windows_passed": False,
+            "telemetry_passed": False,
+            "deployment_ready": False,
+        },
+    }
+    allocation = {
+        "status": "allocation_selected",
+        "selected": {
+            "metrics": {
+                "qsize": 300,
+                "captured_net_monthly_p05": 1860,
+                "avg_active_pair_notional": 864,
+            }
+        },
+    }
+    result = evaluate_risk_governor(
+        evidence_packet=evidence,
+        allocation_selection=allocation,
+        objective_audit={"objective_proven": False},
+        sustainability_stress={"status": "sustainability_stress_passed"},
+    )
+    assert result["status"] == "continue_public_paper_collect_signed_telemetry_next"
+    assert result["metrics"]["recommended_qsize"] == 300
+    assert not result["deployment_allowed"]
+
+
+def test_risk_governor_scales_down_when_cash_or_loss_limits_bind() -> None:
+    evidence = {
+        "income": {"p05_monthly_50pct_capture": 2000},
+        "risk": {
+            "max_active_pair_notional": 1600,
+            "cash_reserve_fraction": 0.20,
+            "all_active_unhedged_one_side_loss_to_zero": 1200,
+            "configured_inventory_cap_loss_to_zero": 100,
+            "configured_cap_recovery_days": 2,
+        },
+        "gates": {},
+    }
+    allocation = {"status": "allocation_selected", "selected": {"metrics": {"qsize": 800, "captured_net_monthly_p05": 2000}}}
+    result = evaluate_risk_governor(
+        evidence_packet=evidence,
+        allocation_selection=allocation,
+        cfg=RiskGovernorConfig(min_cash_reserve_fraction=0.40, max_unhedged_loss_fraction=0.50),
+    )
+    assert result["metrics"]["recommended_scale"] == 0.75
+    assert result["metrics"]["recommended_qsize"] == 600
+    assert result["status"] == "reduce_size_and_continue_paper"
+
+
+def test_completion_audit_requires_all_terminal_gates() -> None:
+    result = evaluate_completion_audit(
+        objective_audit={
+            "objective_proven": False,
+            "metrics": {"packet_50pct_capture_p05": 1900, "selected_qsize": 300},
+        },
+        sustainability_stress={
+            "status": "sustainability_stress_passed",
+            "metrics": {"reference_monthly_income": 1860, "configured_cap_reference_monthly_after_loss": 1680},
+        },
+        risk_governor={
+            "risk_core_passed": True,
+            "deployment_allowed": False,
+            "metrics": {"recommended_qsize": 300, "governing_50pct_p05_monthly_income": 1860},
+        },
+    )
+    assert result["status"] == "completion_not_proven"
+    assert "objective proof audit is not proven" in result["blockers"]
+    assert "deployment is not allowed by risk governor" in result["blockers"]
+
+
+def test_completion_audit_passes_when_terminal_gates_pass() -> None:
+    result = evaluate_completion_audit(
+        objective_audit={"objective_proven": True, "metrics": {"packet_50pct_capture_p05": 1900}},
+        sustainability_stress={"status": "sustainability_stress_passed", "metrics": {"reference_monthly_income": 1860}},
+        risk_governor={
+            "risk_core_passed": True,
+            "deployment_allowed": True,
+            "metrics": {"recommended_qsize": 300, "governing_50pct_p05_monthly_income": 1860},
+        },
+    )
+    assert result["status"] == "completion_proven"
+    assert result["blockers"] == []
+
+
+def test_governed_config_applies_risk_governor_size_and_cash_cap() -> None:
+    cfg = LPConfig(quote_size_shares=800, active_capital_limit=1900)
+    governed, meta = apply_risk_governor_to_lp_config(
+        cfg,
+        {
+            "status": "continue_public_paper_collect_signed_telemetry_next",
+            "risk_core_passed": True,
+            "deployment_allowed": False,
+            "metrics": {
+                "recommended_qsize": 300,
+                "recommended_scale": 0.375,
+                "max_active_pair_notional_by_cash": 1200,
+            },
+        },
+    )
+    assert governed.quote_size_shares == 300
+    assert governed.active_capital_limit == 1200
+    assert meta["quote_size_before"] == 800
+    assert not meta["deployment_allowed"]
+
+
+def test_governed_config_rejects_failed_core_gates() -> None:
+    cfg = LPConfig()
+    try:
+        apply_risk_governor_to_lp_config(cfg, {"risk_core_passed": False, "metrics": {"recommended_qsize": 300}})
+    except ValueError as exc:
+        assert "core gates" in str(exc)
+    else:
+        raise AssertionError("expected failed risk governor core gates to block config")
+
+
+def test_paper_replay_make_config_can_use_risk_governor_json(tmp_path) -> None:
+    risk_path = tmp_path / "risk_governor.json"
+    risk_path.write_text(
+        json.dumps(
+            {
+                "risk_core_passed": True,
+                "metrics": {
+                    "recommended_qsize": 250,
+                    "recommended_scale": 0.5,
+                    "max_active_pair_notional_by_cash": 1000,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    args = argparse.Namespace(
+        initial_capital=2000,
+        quote_size=800,
+        quote_offset=0.02,
+        safety_margin=0.015,
+        active_capital_limit=1900,
+        min_reward_daily=0,
+        max_market_competitiveness=1,
+        allowed_categories="",
+        excluded_categories="sports,crypto",
+        min_reward_density_per_day=0.1,
+        recent_vol_window=6,
+        max_recent_vol=0.006,
+        max_recent_jump=0.025,
+        vol_quote_multiplier=0.5,
+        risk_governor_json=str(risk_path),
+        allow_risk_governor_not_core=False,
+    )
+    cfg = make_lp_config(args)
+    assert cfg.quote_size_shares == 250
+    assert cfg.active_capital_limit == 1000
+
+
+def test_hedge_feasibility_identifies_partial_internal_hedge() -> None:
+    capital_risk = {
+        "config": {"initial_capital": 2000, "exit_slippage": 0.005},
+        "metrics": {
+            "all_active_unhedged_one_side_loss_to_zero": 700,
+            "configured_inventory_cap_loss_to_zero": 180,
+            "capped_recovery_days_at_p05_income": 3,
+            "max_pair_cost_per_share": 0.96,
+            "min_locked_pair_edge_usdc": 12,
+        },
+        "market_stress": [{"locked_pair_edge_usdc": 12}, {"locked_pair_edge_usdc": 14}],
+        "gates": {"no_total_ruin_unhedged_gate_passed": True},
+    }
+    result = evaluate_hedge_feasibility(capital_risk=capital_risk)
+    assert result["status"] == "partial_internal_hedge_feasible"
+    assert result["metrics"]["configured_cap_loss_reduction_fraction"] > 0.7
+    assert result["metrics"]["pair_lock_edge_total_usdc"] == 26
+    assert result["gates"]["emergency_exit_slippage_cushion_passed"]
+    assert "no perfect external hedge assumed" in result["blockers"][-1]
+
+
+def test_hedge_feasibility_blocks_when_cap_or_slippage_fails() -> None:
+    capital_risk = {
+        "config": {"initial_capital": 2000, "exit_slippage": 0.02},
+        "metrics": {
+            "all_active_unhedged_one_side_loss_to_zero": 700,
+            "configured_inventory_cap_loss_to_zero": 600,
+            "capped_recovery_days_at_p05_income": 12,
+            "max_pair_cost_per_share": 0.995,
+            "min_locked_pair_edge_usdc": -1,
+        },
+        "gates": {"no_total_ruin_unhedged_gate_passed": True},
+    }
+    result = evaluate_hedge_feasibility(
+        capital_risk=capital_risk,
+        cfg=HedgeFeasibilityConfig(min_loss_reduction_fraction=0.5, max_configured_cap_loss_fraction=0.25),
+    )
+    assert result["status"] == "hedge_not_feasible"
+    assert not result["gates"]["pair_lock_when_both_sides_fill_passed"]
+    assert not result["gates"]["emergency_exit_slippage_cushion_passed"]
+    assert not result["gates"]["configured_cap_tail_reduction_passed"]

@@ -6,9 +6,11 @@ The repo can run:
 
 1. synthetic backtests;
 2. snapshot backtests from collected orderbook/reward data;
-3. paper replay that outputs intended quote rows from snapshots.
+3. paper replay that outputs intended quote rows from snapshots;
+4. public live reward snapshots plus paper quote logging;
+5. paper quote outcome analytics using the next observed snapshot.
 
-A live paper bot must run on your machine/server because it has to keep a WebSocket connection open and log data over time. This repo intentionally does not place live orders.
+This repo intentionally does not place live orders. The live paper loop only reads public market/reward data and writes snapshots, quote intents, and a safety manifest.
 
 ## Backtest command
 
@@ -44,6 +46,46 @@ python scripts/paper_replay.py \
 
 This writes intended quotes only. It does not sign orders, send orders, or touch private keys.
 
+## Public live snapshot + paper loop
+
+Run a 24-hour paper collection at 5-minute cadence:
+
+```bash
+python scripts/paper_replay.py \
+  --live \
+  --iterations 288 \
+  --interval-seconds 300 \
+  --snapshot-out data/raw/live_lp_snapshots.csv \
+  --out data/processed/live_lp_quotes.csv \
+  --manifest-out data/raw/live_lp_paper_manifest.json
+```
+
+The manifest records the exact LP and snapshot configs plus this safety invariant:
+
+```text
+paper only; no private keys, order signing, order submission, or cancellation
+```
+
+## Paper outcome analytics
+
+After at least two snapshots, estimate paper quote outcomes:
+
+```bash
+python scripts/paper_analyze.py \
+  --snapshots data/raw/live_lp_snapshots.csv \
+  --quotes data/processed/live_lp_quotes.csv \
+  --out-dir data/processed/live_lp_paper_analysis
+```
+
+Outputs:
+
+```text
+paper_summary.json
+paper_quote_outcomes.csv
+```
+
+Fill diagnostics are midpoint-cross proxies, not executed-order proof. A would-fill is counted only when the next observed midpoint crosses through the paper bid. Pending latest quotes are separated from stale quotes.
+
 ## Required snapshot columns
 
 ```text
@@ -76,6 +118,9 @@ would_pair_complete
 would_open_inventory
 would_exit_inventory
 stale_fill_rate
+pending_quote_rate
+fill_proxy_rate
+estimated_mark_to_next_pnl_if_all_fills_usdc
 reward_capture_error
 cluster_loss_concentration
 ```

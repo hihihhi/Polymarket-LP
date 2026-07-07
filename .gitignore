@@ -6,3 +6,4 @@ data/raw/
 data/processed/
 lp_backtest_out/
 *.csv
+*.egg-info/
