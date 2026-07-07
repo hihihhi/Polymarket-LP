@@ -7,6 +7,7 @@ import pandas as pd
 
 from polymarket_lp.lp_backtest import (
     LPConfig,
+    depth_capped_quote_size,
     filter_snapshots_for_strategy,
     handle_fill,
     make_synthetic_snapshots,
@@ -110,6 +111,43 @@ def test_paper_quotes_preserve_clob_depth_fields() -> None:
     assert set(["yes_best_bid", "yes_best_ask", "no_best_bid", "no_best_ask"]).issubset(quotes.columns)
     assert quotes["yes_best_bid_size"].iloc[0] == 123.0
     assert quotes["yes_best_ask"].iloc[0] == 0.53
+
+
+def test_depth_cap_quote_size_uses_smaller_opposite_rescue_ask_depth() -> None:
+    row = pd.Series(
+        {
+            "yes_mid": 0.52,
+            "no_mid": 0.48,
+            "max_incentive_spread": 0.05,
+            "min_incentive_size": 10.0,
+            "reward_daily": 100.0,
+            "yes_best_ask_size": 80.0,
+            "no_best_ask_size": 30.0,
+        }
+    )
+    cfg = LPConfig(quote_size_shares=100, depth_cap_quote_size=True, depth_quote_size_fraction=0.9)
+    assert depth_capped_quote_size(row, cfg) == 27.0
+    q = quote_for_row(row, cfg)
+    assert q["eligible"]
+    assert q["quote_size"] == 27.0
+
+
+def test_depth_cap_quote_size_drops_quotes_below_minimum() -> None:
+    row = pd.Series(
+        {
+            "yes_mid": 0.52,
+            "no_mid": 0.48,
+            "max_incentive_spread": 0.05,
+            "min_incentive_size": 50.0,
+            "reward_daily": 100.0,
+            "yes_best_ask_size": 80.0,
+            "no_best_ask_size": 30.0,
+        }
+    )
+    cfg = LPConfig(quote_size_shares=100, depth_cap_quote_size=True)
+    q = quote_for_row(row, cfg)
+    assert q["quote_size"] == 30.0
+    assert not q["eligible"]
 
 
 def test_handle_fill_pairs_opposite_inventory() -> None:
@@ -1488,6 +1526,9 @@ def test_paper_replay_make_config_can_use_risk_governor_json(tmp_path) -> None:
         max_recent_vol=0.006,
         max_recent_jump=0.025,
         vol_quote_multiplier=0.5,
+        depth_cap_quote_size=False,
+        depth_quote_size_fraction=1.0,
+        min_depth_capped_quote_size=1.0,
         risk_governor_json=str(risk_path),
         allow_risk_governor_not_core=False,
     )

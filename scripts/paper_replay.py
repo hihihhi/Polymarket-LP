@@ -51,6 +51,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-recent-vol", type=float, default=0.006)
     p.add_argument("--max-recent-jump", type=float, default=0.025)
     p.add_argument("--vol-quote-multiplier", type=float, default=0.5)
+    p.add_argument("--depth-cap-quote-size", action="store_true", help="Cap quote size by displayed opposite-side CLOB ask depth for taker rescue")
+    p.add_argument("--depth-quote-size-fraction", type=float, default=1.0, help="Maximum quote size as fraction of the smaller YES/NO displayed ask size")
+    p.add_argument("--min-depth-capped-quote-size", type=float, default=1.0, help="Drop depth-capped quotes smaller than this share size")
     p.add_argument("--risk-governor-json", default="", help="Optional risk_governor.py JSON to govern qsize/capital")
     p.add_argument("--allow-risk-governor-not-core", action="store_true")
     return p.parse_args()
@@ -72,6 +75,9 @@ def make_lp_config(args: argparse.Namespace) -> LPConfig:
         max_recent_vol=args.max_recent_vol,
         max_recent_jump=args.max_recent_jump,
         vol_quote_multiplier=args.vol_quote_multiplier,
+        depth_cap_quote_size=args.depth_cap_quote_size,
+        depth_quote_size_fraction=args.depth_quote_size_fraction,
+        min_depth_capped_quote_size_shares=args.min_depth_capped_quote_size,
     )
     if getattr(args, "risk_governor_json", ""):
         risk_governor = json.loads(Path(args.risk_governor_json).read_text(encoding="utf-8-sig"))

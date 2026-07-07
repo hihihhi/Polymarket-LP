@@ -38,6 +38,9 @@ class LPConfig:
     max_recent_vol: float = 1.0
     max_recent_jump: float = 1.0
     vol_quote_multiplier: float = 0.0
+    depth_cap_quote_size: bool = False
+    depth_quote_size_fraction: float = 1.0
+    min_depth_capped_quote_size_shares: float = 1.0
 
 
 @dataclass(slots=True)
@@ -189,9 +192,24 @@ def competitor_score_for_row(row: pd.Series, cfg: LPConfig) -> float:
     return cfg.assumed_competitor_score
 
 
+def depth_capped_quote_size(row: pd.Series, cfg: LPConfig, *, base_size: float | None = None) -> float:
+    size = cfg.quote_size_shares if base_size is None else float(base_size)
+    if not cfg.depth_cap_quote_size:
+        return size
+    ask_sizes: list[float] = []
+    for col in ["yes_best_ask_size", "no_best_ask_size"]:
+        value = row.get(col, np.nan)
+        if pd.notna(value) and math.isfinite(float(value)) and float(value) > 0:
+            ask_sizes.append(float(value))
+    if len(ask_sizes) < 2:
+        return 0.0
+    capped = min(size, min(ask_sizes) * max(0.0, float(cfg.depth_quote_size_fraction)))
+    return capped if capped >= cfg.min_depth_capped_quote_size_shares else 0.0
+
+
 def quote_for_row(row: pd.Series, cfg: LPConfig, *, quote_offset: float | None = None, quote_size: float | None = None) -> dict[str, float | bool]:
     offset = cfg.quote_offset if quote_offset is None else float(quote_offset)
-    size = cfg.quote_size_shares if quote_size is None else float(quote_size)
+    size = depth_capped_quote_size(row, cfg, base_size=quote_size)
     y_mid = float(row["yes_mid"])
     n_mid = float(row["no_mid"])
     y_bid = max(0.001, y_mid - offset)
@@ -204,7 +222,7 @@ def quote_for_row(row: pd.Series, cfg: LPConfig, *, quote_offset: float | None =
         pair_cost = y_bid + n_bid
     max_spread = float(row["max_incentive_spread"])
     min_size = float(row.get("min_incentive_size", 0))
-    eligible = size >= min_size and offset <= max_spread and pair_cost <= 1 - cfg.safety_margin + 1e-9
+    eligible = size > 0 and size >= min_size and offset <= max_spread and pair_cost <= 1 - cfg.safety_margin + 1e-9
     y_score = order_score(max_spread, y_mid - y_bid, size)
     n_score = order_score(max_spread, n_mid - n_bid, size)
     our_score = min(y_score, n_score) if eligible else 0.0
