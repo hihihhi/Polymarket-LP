@@ -1258,6 +1258,7 @@ def test_completion_audit_requires_all_terminal_gates() -> None:
             "deployment_allowed": False,
             "metrics": {"recommended_qsize": 300, "governing_50pct_p05_monthly_income": 1860},
         },
+        rescue_stress={"status": "rescue_stress_passed", "metrics": {"price_feasible_rate": 1.0}},
     )
     assert result["status"] == "completion_not_proven"
     assert "objective proof audit is not proven" in result["blockers"]
@@ -1273,9 +1274,20 @@ def test_completion_audit_passes_when_terminal_gates_pass() -> None:
             "deployment_allowed": True,
             "metrics": {"recommended_qsize": 300, "governing_50pct_p05_monthly_income": 1860},
         },
+        rescue_stress={"status": "rescue_stress_passed", "metrics": {"price_feasible_rate": 1.0}},
     )
     assert result["status"] == "completion_proven"
     assert result["blockers"] == []
+
+
+def test_completion_audit_requires_rescue_stress_when_enabled() -> None:
+    result = evaluate_completion_audit(
+        objective_audit={"objective_proven": True, "metrics": {"packet_50pct_capture_p05": 1900}},
+        sustainability_stress={"status": "sustainability_stress_passed", "metrics": {"reference_monthly_income": 1860}},
+        risk_governor={"risk_core_passed": True, "deployment_allowed": True, "metrics": {}},
+    )
+    assert result["status"] == "completion_not_proven"
+    assert "rescue stress is not passed" in result["blockers"]
 
 
 def test_governed_config_applies_risk_governor_size_and_cash_cap() -> None:

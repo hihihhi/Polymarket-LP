@@ -21,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--objective-audit", required=True)
     p.add_argument("--sustainability-stress", required=True)
     p.add_argument("--risk-governor", required=True)
+    p.add_argument("--rescue-stress", default="")
     p.add_argument("--out", required=True)
     p.add_argument("--markdown-out", required=True)
     p.add_argument("--downloads-copy", default="")
@@ -28,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--allow-objective-not-proven", action="store_true")
     p.add_argument("--allow-sustainability-fail", action="store_true")
     p.add_argument("--allow-risk-governor-fail", action="store_true")
+    p.add_argument("--allow-rescue-stress-fail", action="store_true")
     p.add_argument("--allow-deployment-not-allowed", action="store_true")
     return p.parse_args()
 
@@ -38,10 +40,12 @@ def main() -> None:
         objective_audit=_load(args.objective_audit),
         sustainability_stress=_load(args.sustainability_stress),
         risk_governor=_load(args.risk_governor),
+        rescue_stress=_load(args.rescue_stress) if args.rescue_stress else None,
         cfg=CompletionAuditConfig(
             require_objective_proven=not args.allow_objective_not_proven,
             require_sustainability_stress=not args.allow_sustainability_fail,
             require_risk_governor=not args.allow_risk_governor_fail,
+            require_rescue_stress=not args.allow_rescue_stress_fail,
             require_deployment_allowed=not args.allow_deployment_not_allowed,
         ),
     )
@@ -51,6 +55,7 @@ def main() -> None:
             "objective_audit": args.objective_audit,
             "sustainability_stress": args.sustainability_stress,
             "risk_governor": args.risk_governor,
+            "rescue_stress": args.rescue_stress,
         },
     }
     out = Path(args.out)
@@ -81,6 +86,7 @@ def _markdown(payload: dict[str, Any]) -> str:
         f"- Objective packet 50% p05: {_money(metrics.get('objective_packet_50pct_p05'))}; governor 50% p05: {_money(metrics.get('governor_50pct_p05'))}.",
         f"- Sustainability reference income: {_money(metrics.get('sustainability_reference_income'))}; after cap loss: {_money(metrics.get('sustainability_after_cap_loss'))}.",
         f"- Cash reserve: {_pct(metrics.get('cash_reserve_fraction'))}; unhedged loss: {_money(metrics.get('unhedged_loss_usdc'))}; cap loss: {_money(metrics.get('configured_cap_loss_usdc'))}; cap recovery: {_num(metrics.get('configured_cap_recovery_days'))} days.",
+        f"- Rescue feasible rate: {_pct(metrics.get('rescue_price_feasible_rate'))}; rescue-blocked loss: {_money(metrics.get('rescue_blocked_loss_usdc'))}; immediate exit loss if rescue fails: {_money(metrics.get('rescue_immediate_exit_loss_usdc'))}.",
         "",
         "## Terminal gates",
         "",

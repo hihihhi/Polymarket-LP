@@ -11,6 +11,7 @@ class CompletionAuditConfig:
     require_objective_proven: bool = True
     require_sustainability_stress: bool = True
     require_risk_governor: bool = True
+    require_rescue_stress: bool = True
     require_deployment_allowed: bool = True
 
 
@@ -19,12 +20,14 @@ def evaluate_completion_audit(
     objective_audit: dict[str, Any],
     sustainability_stress: dict[str, Any],
     risk_governor: dict[str, Any],
+    rescue_stress: dict[str, Any] | None = None,
     cfg: CompletionAuditConfig | None = None,
 ) -> dict[str, Any]:
     cfg = cfg or CompletionAuditConfig()
     objective = _dict(objective_audit)
     sustain = _dict(sustainability_stress)
     governor = _dict(risk_governor)
+    rescue = _dict(rescue_stress)
     objective_metrics = _dict(objective.get("metrics"))
     governor_metrics = _dict(governor.get("metrics"))
     sustain_metrics = _dict(sustain.get("metrics"))
@@ -33,12 +36,14 @@ def evaluate_completion_audit(
         "objective_proven": bool(objective.get("objective_proven", False)),
         "sustainability_stress_passed": sustain.get("status") == "sustainability_stress_passed",
         "risk_governor_core_passed": bool(governor.get("risk_core_passed", False)),
+        "rescue_stress_passed": rescue.get("status") == "rescue_stress_passed",
         "deployment_allowed": bool(governor.get("deployment_allowed", False)),
     }
     required = {
         "objective_proven": cfg.require_objective_proven,
         "sustainability_stress_passed": cfg.require_sustainability_stress,
         "risk_governor_core_passed": cfg.require_risk_governor,
+        "rescue_stress_passed": cfg.require_rescue_stress,
         "deployment_allowed": cfg.require_deployment_allowed,
     }
     blockers = _blockers(gates, required)
@@ -58,6 +63,11 @@ def evaluate_completion_audit(
             "unhedged_loss_usdc": governor_metrics.get("unhedged_loss_usdc"),
             "configured_cap_loss_usdc": governor_metrics.get("configured_cap_loss_usdc"),
             "configured_cap_recovery_days": governor_metrics.get("configured_cap_recovery_days"),
+            "rescue_price_feasible_rate": _dict(rescue.get("metrics")).get("price_feasible_rate"),
+            "rescue_blocked_loss_usdc": _dict(rescue.get("metrics")).get("latest_blocked_loss_to_zero"),
+            "rescue_immediate_exit_loss_usdc": _dict(rescue.get("metrics")).get(
+                "latest_immediate_exit_loss_if_rescue_fails"
+            ),
         },
         "gates": gates,
         "required_gates": required,
@@ -71,6 +81,7 @@ def _blockers(gates: dict[str, bool], required: dict[str, bool]) -> list[str]:
         "objective_proven": "objective proof audit is not proven",
         "sustainability_stress_passed": "sustainability stress is not passed",
         "risk_governor_core_passed": "risk governor core gates are not passed",
+        "rescue_stress_passed": "rescue stress is not passed",
         "deployment_allowed": "deployment is not allowed by risk governor",
     }
     return [
