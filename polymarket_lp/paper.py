@@ -33,6 +33,10 @@ PAPER_QUOTE_COLUMNS = [
     "recent_vol",
     "recent_jump",
     "quote_data_quality",
+    "yes_best_bid_size",
+    "yes_best_ask_size",
+    "no_best_bid_size",
+    "no_best_ask_size",
 ]
 
 
@@ -185,6 +189,10 @@ def build_paper_quotes(snapshots: pd.DataFrame, cfg: LPConfig) -> pd.DataFrame:
                         "recent_vol": row.get("recent_vol", 0.0),
                         "recent_jump": row.get("recent_jump", 0.0),
                         "quote_data_quality": row.get("quote_data_quality", ""),
+                        "yes_best_bid_size": row.get("yes_best_bid_size", float("nan")),
+                        "yes_best_ask_size": row.get("yes_best_ask_size", float("nan")),
+                        "no_best_bid_size": row.get("no_best_bid_size", float("nan")),
+                        "no_best_ask_size": row.get("no_best_ask_size", float("nan")),
                     }
                 )
     return pd.DataFrame(out_rows, columns=PAPER_QUOTE_COLUMNS)
@@ -563,15 +571,16 @@ def _market_snapshot_row(
     yes_bid = _to_float(market.get("bestBid"), default=float("nan"))
     yes_ask = _to_float(market.get("bestAsk"), default=float("nan"))
     no_bid = no_ask = float("nan")
+    yes_bid_size = yes_ask_size = no_bid_size = no_ask_size = float("nan")
     quality = "gamma_best_bid_ask"
 
     if cfg.include_clob_books and len(token_ids) >= 2:
-        yes_bid, yes_ask = _book_bid_ask(
+        yes_bid, yes_ask, yes_bid_size, yes_ask_size = _book_bid_ask(
             cfg=cfg, token_id=token_ids[0], get_json=get_json, fallback_bid=yes_bid, fallback_ask=yes_ask
         )
         if cfg.sleep_between_book_requests_seconds:
             time.sleep(cfg.sleep_between_book_requests_seconds)
-        no_bid, no_ask = _book_bid_ask(
+        no_bid, no_ask, no_bid_size, no_ask_size = _book_bid_ask(
             cfg=cfg, token_id=token_ids[1], get_json=get_json, fallback_bid=float("nan"), fallback_ask=float("nan")
         )
         quality = "clob_book_both_sides" if pd.notna(no_bid) and pd.notna(no_ask) else "clob_book_yes_only"
@@ -598,6 +607,10 @@ def _market_snapshot_row(
         "yes_best_ask": yes_ask,
         "no_best_bid": no_bid,
         "no_best_ask": no_ask,
+        "yes_best_bid_size": yes_bid_size,
+        "yes_best_ask_size": yes_ask_size,
+        "no_best_bid_size": no_bid_size,
+        "no_best_ask_size": no_ask_size,
         "reward_daily": reward_daily,
         "max_incentive_spread": max_spread,
         "min_incentive_size": min_size,
@@ -620,7 +633,7 @@ def _book_bid_ask(
     get_json: JsonGetter,
     fallback_bid: float,
     fallback_ask: float,
-) -> tuple[float, float]:
+) -> tuple[float, float, float, float]:
     try:
         book = get_json(
             f"{cfg.clob_base_url.rstrip('/')}/book",
@@ -628,19 +641,38 @@ def _book_bid_ask(
             cfg.request_timeout_seconds,
         )
     except Exception:
-        return fallback_bid, fallback_ask
-    bid, ask = _parse_book_bid_ask(book)
-    return (fallback_bid if pd.isna(bid) else bid, fallback_ask if pd.isna(ask) else ask)
+        return fallback_bid, fallback_ask, float("nan"), float("nan")
+    bid, ask, bid_size, ask_size = _parse_book_bid_ask(book)
+    return (
+        fallback_bid if pd.isna(bid) else bid,
+        fallback_ask if pd.isna(ask) else ask,
+        bid_size,
+        ask_size,
+    )
 
 
-def _parse_book_bid_ask(book: Any) -> tuple[float, float]:
+def _parse_book_bid_ask(book: Any) -> tuple[float, float, float, float]:
     if not isinstance(book, dict):
-        return float("nan"), float("nan")
-    bids = [_to_float(item.get("price"), default=float("nan")) for item in book.get("bids") or [] if isinstance(item, dict)]
-    asks = [_to_float(item.get("price"), default=float("nan")) for item in book.get("asks") or [] if isinstance(item, dict)]
-    bids = [value for value in bids if pd.notna(value)]
-    asks = [value for value in asks if pd.notna(value)]
-    return (max(bids) if bids else float("nan"), min(asks) if asks else float("nan"))
+        return float("nan"), float("nan"), float("nan"), float("nan")
+    bids = _price_size_rows(book.get("bids") or [])
+    asks = _price_size_rows(book.get("asks") or [])
+    best_bid = max((price for price, _ in bids), default=float("nan"))
+    best_ask = min((price for price, _ in asks), default=float("nan"))
+    bid_size = sum(size for price, size in bids if price == best_bid) if pd.notna(best_bid) else float("nan")
+    ask_size = sum(size for price, size in asks if price == best_ask) if pd.notna(best_ask) else float("nan")
+    return best_bid, best_ask, bid_size, ask_size
+
+
+def _price_size_rows(rows: Any) -> list[tuple[float, float]]:
+    out: list[tuple[float, float]] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        price = _to_float(item.get("price"), default=float("nan"))
+        size = _to_float(item.get("size"), default=0.0)
+        if pd.notna(price) and pd.notna(size) and size > 0:
+            out.append((price, size))
+    return out
 
 
 def _event_category(event: dict[str, Any]) -> tuple[str, str]:

@@ -63,7 +63,9 @@ def load_snapshots(path: str | Path) -> pd.DataFrame:
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
     for c in [
         "reward_daily", "max_incentive_spread", "min_incentive_size", "yes_mid", "no_mid",
-        "yes_best_bid", "yes_best_ask", "no_best_bid", "no_best_ask", "market_competitiveness", "competitor_score",
+        "yes_best_bid", "yes_best_ask", "no_best_bid", "no_best_ask",
+        "yes_best_bid_size", "yes_best_ask_size", "no_best_bid_size", "no_best_ask_size",
+        "market_competitiveness", "competitor_score",
     ]:
         if c in df:
             df[c] = pd.to_numeric(df[c], errors="coerce")

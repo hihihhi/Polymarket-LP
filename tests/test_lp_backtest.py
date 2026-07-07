@@ -17,6 +17,7 @@ from polymarket_lp.lp_backtest import (
 from polymarket_lp.paper import (
     LiveSnapshotConfig,
     PaperAnalysisConfig,
+    _parse_book_bid_ask,
     analyze_paper_quotes,
     build_paper_quotes,
     collect_live_reward_snapshots,
@@ -53,6 +54,55 @@ def test_quote_enforces_pair_safety() -> None:
     )
     q = quote_for_row(row, LPConfig(quote_size_shares=25, quote_offset=0.01, safety_margin=0.02))
     assert q["pair_cost"] <= 0.98 + 1e-9
+
+
+def test_parse_clob_book_keeps_best_size_not_first_row() -> None:
+    bid, ask, bid_size, ask_size = _parse_book_bid_ask(
+        {
+            "bids": [
+                {"price": "0.10", "size": "50"},
+                {"price": "0.25", "size": "12.5"},
+                {"price": "0.25", "size": "7.5"},
+            ],
+            "asks": [
+                {"price": "0.90", "size": "100"},
+                {"price": "0.75", "size": "4"},
+            ],
+        }
+    )
+    assert bid == 0.25
+    assert ask == 0.75
+    assert bid_size == 20.0
+    assert ask_size == 4.0
+
+
+def test_paper_quotes_preserve_clob_depth_fields() -> None:
+    snapshots = pd.DataFrame(
+        [
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "category": "economics",
+                "cluster": "economics",
+                "yes_mid": 0.52,
+                "no_mid": 0.48,
+                "reward_daily": 100.0,
+                "max_incentive_spread": 0.05,
+                "min_incentive_size": 10.0,
+                "market_competitiveness": 0.1,
+                "yes_best_bid_size": 123.0,
+                "yes_best_ask_size": 45.0,
+                "no_best_bid_size": 67.0,
+                "no_best_ask_size": 89.0,
+            }
+        ]
+    )
+    quotes = build_paper_quotes(snapshots, LPConfig(quote_size_shares=10, active_capital_limit=1000))
+    assert len(quotes) == 2
+    assert set(["yes_best_bid_size", "yes_best_ask_size", "no_best_bid_size", "no_best_ask_size"]).issubset(
+        quotes.columns
+    )
+    assert quotes["yes_best_bid_size"].iloc[0] == 123.0
 
 
 def test_handle_fill_pairs_opposite_inventory() -> None:
