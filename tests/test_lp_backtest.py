@@ -36,6 +36,7 @@ from polymarket_lp.completion import evaluate_completion_audit
 from polymarket_lp.governed_config import apply_risk_governor_to_lp_config
 from polymarket_lp.hedge import HedgeFeasibilityConfig, evaluate_hedge_feasibility
 from polymarket_lp.rescue_stress import RescueStressConfig, evaluate_rescue_stress
+from polymarket_lp.depth_gate import DepthReadinessConfig, evaluate_depth_readiness
 from scripts.paper_replay import make_lp_config
 from scripts.update_target_status import _bootstrap_target_from_quotes, _capture_stress_grid, _json_safe
 from scripts.target_config_grid import SelectionConfig, _candidate_row
@@ -1383,6 +1384,47 @@ def test_rescue_stress_reports_taker_depth_feasibility() -> None:
     assert result["metrics"]["taker_rescue_book_scenarios"] == 2
     assert result["metrics"]["taker_rescue_feasible_rate"] == 1.0
     assert result["gates"]["taker_rescue_depth_gate_passed"]
+
+
+def test_depth_readiness_requires_income_sample_and_taker_depth() -> None:
+    target_status = {
+        "paper_summary": {"duration_hours": 6.5, "quote_rows": 30, "quote_data_quality_counts": {"clob_book_both_sides": 30}},
+        "target_monitor": {
+            "input": {"duration_hours": 6.5, "quote_rows": 30, "unique_markets_quoted": 3},
+            "target_math": {"net_monthly_after_loss_haircut": 3000},
+        },
+        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200}],
+    }
+    rescue = {
+        "metrics": {
+            "taker_rescue_book_scenarios": 30,
+            "taker_rescue_feasible_rate": 0.9,
+            "taker_rescue_min_pair_edge_per_share": 0.01,
+            "taker_rescue_min_depth_fraction": 1.2,
+        }
+    }
+    result = evaluate_depth_readiness(
+        target_status=target_status,
+        rescue_stress=rescue,
+        cfg=DepthReadinessConfig(min_observation_hours=6, min_quote_rows=24, min_book_scenarios=24),
+    )
+    assert result["status"] == "depth_ready"
+    assert result["blockers"] == []
+
+
+def test_depth_readiness_blocks_short_non_depth_sample() -> None:
+    result = evaluate_depth_readiness(
+        target_status={
+            "paper_summary": {"duration_hours": 1, "quote_rows": 6, "quote_data_quality_counts": {"gamma_best_bid_ask": 6}},
+            "target_monitor": {
+                "input": {"duration_hours": 1, "quote_rows": 6, "unique_markets_quoted": 1},
+                "target_math": {"net_monthly_after_loss_haircut": 4000},
+            },
+        },
+        rescue_stress={"metrics": {"taker_rescue_book_scenarios": 0}},
+    )
+    assert result["status"] == "depth_not_ready"
+    assert "quote evidence is not CLOB-depth quality" in result["blockers"]
 
 
 def test_governed_config_applies_risk_governor_size_and_cash_cap() -> None:
