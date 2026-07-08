@@ -11,6 +11,7 @@ from polymarket_lp.lp_backtest import (
     depth_capped_quote_size,
     filter_snapshots_for_strategy,
     handle_fill,
+    inventory_capped_quote_size,
     make_synthetic_snapshots,
     partial_rescue_residual_capped_quote_size,
     quote_for_row,
@@ -214,6 +215,31 @@ def test_partial_rescue_residual_cap_requires_book_depth() -> None:
     q = quote_for_row(row, cfg)
     assert q["quote_size"] == 0.0
     assert not q["eligible"]
+
+
+def test_quote_size_respects_per_market_inventory_budget_before_reward_scoring() -> None:
+    row = pd.Series(
+        {
+            "yes_mid": 0.62,
+            "no_mid": 0.38,
+            "max_incentive_spread": 0.05,
+            "min_incentive_size": 10.0,
+            "reward_daily": 100.0,
+        }
+    )
+    cfg = LPConfig(
+        quote_size_shares=500,
+        quote_offset=0.02,
+        safety_margin=0.015,
+        max_unpaired_per_market=25.0,
+        min_depth_capped_quote_size_shares=1.0,
+    )
+    capped = inventory_capped_quote_size(cfg, base_size=500, yes_bid=0.60, no_bid=0.36)
+    assert capped == pytest.approx(25.0 / 0.60)
+    q = quote_for_row(row, cfg)
+    assert q["eligible"]
+    assert float(q["quote_size"]) == pytest.approx(25.0 / float(q["yes_bid"]))
+    assert float(q["quote_size"]) * max(float(q["yes_bid"]), float(q["no_bid"])) <= 25.0 + 1e-9
 
 
 def test_handle_fill_pairs_opposite_inventory() -> None:

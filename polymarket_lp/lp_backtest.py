@@ -248,6 +248,24 @@ def partial_rescue_residual_capped_quote_size(
     return capped if capped >= cfg.min_depth_capped_quote_size_shares else 0.0
 
 
+def inventory_capped_quote_size(
+    cfg: LPConfig,
+    *,
+    base_size: float,
+    yes_bid: float,
+    no_bid: float,
+) -> float:
+    """Cap quote size so one filled side cannot exceed per-market inventory budget."""
+
+    size = float(base_size)
+    cap = float(cfg.max_unpaired_per_market)
+    max_bid = max(float(yes_bid), float(no_bid))
+    if cap <= 0 or not math.isfinite(cap) or max_bid <= 0 or not math.isfinite(max_bid):
+        return size
+    capped = min(size, cap / max_bid)
+    return capped if capped >= cfg.min_depth_capped_quote_size_shares else 0.0
+
+
 def quote_for_row(row: pd.Series, cfg: LPConfig, *, quote_offset: float | None = None, quote_size: float | None = None) -> dict[str, float | bool]:
     offset = cfg.quote_offset if quote_offset is None else float(quote_offset)
     size = depth_capped_quote_size(row, cfg, base_size=quote_size)
@@ -261,6 +279,7 @@ def quote_for_row(row: pd.Series, cfg: LPConfig, *, quote_offset: float | None =
         y_bid = max(0.001, y_bid - cut)
         n_bid = max(0.001, n_bid - cut)
         pair_cost = y_bid + n_bid
+    size = inventory_capped_quote_size(cfg, base_size=size, yes_bid=y_bid, no_bid=n_bid)
     size = partial_rescue_residual_capped_quote_size(row, cfg, base_size=size, yes_bid=y_bid, no_bid=n_bid)
     max_spread = float(row["max_incentive_spread"])
     min_size = float(row.get("min_incentive_size", 0))

@@ -56,6 +56,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--quote-size", type=float, default=800.0)
     p.add_argument("--safety-margin", type=float, default=0.015)
     p.add_argument("--active-capital-limit", type=float, default=1900.0)
+    p.add_argument("--max-unpaired-per-market", type=float, default=LPConfig().max_unpaired_per_market)
+    p.add_argument("--max-total-unpaired", type=float, default=LPConfig().max_total_unpaired)
+    p.add_argument("--max-cluster-unpaired", type=float, default=LPConfig().max_cluster_unpaired)
+    p.add_argument("--max-unpaired-minutes", type=float, default=LPConfig().max_unpaired_minutes)
+    p.add_argument("--partial-rescue-max-residual-loss-usdc", type=float, default=LPConfig().partial_rescue_max_residual_loss_usdc)
     p.add_argument("--excluded-categories", default="sports,crypto")
     p.add_argument("--max-recent-vol", type=float, default=0.006)
     p.add_argument("--max-recent-jump", type=float, default=0.025)
@@ -109,6 +114,11 @@ def main() -> None:
             quote_offset=offset,
             safety_margin=args.safety_margin,
             active_capital_limit=args.active_capital_limit,
+            max_unpaired_per_market=args.max_unpaired_per_market,
+            max_total_unpaired=args.max_total_unpaired,
+            max_cluster_unpaired=args.max_cluster_unpaired,
+            max_unpaired_minutes=args.max_unpaired_minutes,
+            partial_rescue_max_residual_loss_usdc=args.partial_rescue_max_residual_loss_usdc,
             excluded_categories=args.excluded_categories,
             min_reward_density_per_day=density,
             max_recent_vol=args.max_recent_vol,
@@ -167,6 +177,11 @@ def main() -> None:
             "quote_size": args.quote_size,
             "safety_margin": args.safety_margin,
             "active_capital_limit": args.active_capital_limit,
+            "max_unpaired_per_market": args.max_unpaired_per_market,
+            "max_total_unpaired": args.max_total_unpaired,
+            "max_cluster_unpaired": args.max_cluster_unpaired,
+            "max_unpaired_minutes": args.max_unpaired_minutes,
+            "partial_rescue_max_residual_loss_usdc": args.partial_rescue_max_residual_loss_usdc,
             "excluded_categories": args.excluded_categories,
             "max_recent_vol": args.max_recent_vol,
             "max_recent_jump": args.max_recent_jump,
