@@ -13,6 +13,7 @@ import argparse
 import json
 import math
 import sys
+import time
 from dataclasses import asdict, dataclass
 from itertools import product
 from pathlib import Path
@@ -110,6 +111,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-single-cluster-active-fraction", type=float, default=0.70)
     p.add_argument("--max-single-market-unhedged-loss-fraction", type=float, default=0.20)
     p.add_argument("--max-single-cluster-unhedged-loss-fraction", type=float, default=0.50)
+    p.add_argument("--progress-every", type=int, default=0, help="Write checkpoint artifacts every N configs; 0 disables.")
+    p.add_argument("--progress-json", default="", help="Optional progress JSON path; defaults under --out-dir when progress is enabled.")
+    p.add_argument("--progress-csv", default="", help="Optional progress CSV path; defaults under --out-dir when progress is enabled.")
     return p.parse_args()
 
 
@@ -135,8 +139,24 @@ def main() -> None:
         max_capture_needed_after_cap_loss=args.max_capture_needed_after_cap_loss,
     )
 
+    grid_values = list(
+        product(
+            _float_grid(args.quote_size_grid),
+            _float_grid(args.residual_loss_grid),
+            _float_grid(args.offset_grid),
+            _float_grid(args.density_grid),
+            _float_grid(args.max_unpaired_per_market_grid),
+            _float_grid(args.max_total_unpaired_grid),
+            _float_grid(args.max_cluster_unpaired_grid),
+            _float_grid(args.max_unpaired_minutes_grid),
+            _bool_grid(args.depth_cap_quote_size_grid),
+            _float_grid(args.depth_quote_size_fraction_grid),
+        )
+    )
+    started = time.monotonic()
     candidates: list[dict[str, Any]] = []
-    for (
+    total_configs = len(grid_values)
+    for idx, (
         quote_size,
         residual_cap,
         offset,
@@ -147,18 +167,7 @@ def main() -> None:
         max_unpaired_minutes,
         depth_cap_quote_size,
         depth_quote_size_fraction,
-    ) in product(
-        _float_grid(args.quote_size_grid),
-        _float_grid(args.residual_loss_grid),
-        _float_grid(args.offset_grid),
-        _float_grid(args.density_grid),
-        _float_grid(args.max_unpaired_per_market_grid),
-        _float_grid(args.max_total_unpaired_grid),
-        _float_grid(args.max_cluster_unpaired_grid),
-        _float_grid(args.max_unpaired_minutes_grid),
-        _bool_grid(args.depth_cap_quote_size_grid),
-        _float_grid(args.depth_quote_size_fraction_grid),
-    ):
+    ) in enumerate(grid_values, start=1):
         cfg = LPConfig(
             quote_size_shares=quote_size,
             quote_offset=offset,
@@ -267,27 +276,31 @@ def main() -> None:
             capital=capital,
         )
         candidates.append(row)
+        if args.progress_every > 0 and (
+            idx == 1 or idx % args.progress_every == 0 or idx == total_configs
+        ):
+            _write_progress(
+                candidates=candidates,
+                completed=len(candidates),
+                total=total_configs,
+                started=started,
+                out=out,
+                args=args,
+                final=False,
+            )
 
-    frame = pd.DataFrame(candidates)
-    if not frame.empty:
-        frame = frame.sort_values(
-            [
-                "depth_ready",
-                "risk_income_gate_passed",
-                "drawdown_core_passed",
-                "capital_risk_stress_passed",
-                "strict_topbook_rescue_passed",
-                "latest_taker_residual_loss_fraction",
-                "capital_configured_cap_loss_fraction",
-                "capital_capture_needed_after_cap_loss",
-                "partial_rescue_max_residual_loss_usdc",
-                "income_p05_at_required_capture",
-                "drawdown_reward_to_trading_loss_ratio",
-                "avg_active_pair_notional",
-            ],
-            ascending=[False, False, False, False, False, True, True, True, True, False, False, True],
-        )
+    frame = _sorted_frame(candidates)
     frame.to_csv(out / "partial_rescue_config_grid.csv", index=False)
+    if args.progress_every > 0:
+        _write_progress(
+            candidates=candidates,
+            completed=len(candidates),
+            total=total_configs,
+            started=started,
+            out=out,
+            args=args,
+            final=True,
+        )
     selected = frame.iloc[0].to_dict() if len(frame) else {}
     payload = {
         "selection_status": _selection_status(selected),
@@ -491,6 +504,69 @@ def _selection_status(selected: dict[str, Any]) -> str:
     if bool(selected.get("risk_income_gate_passed")) and not drawdown_passed:
         return "selected_risk_income_passed_drawdown_failed"
     return "selected_best_failed"
+
+
+def _sorted_frame(candidates: list[dict[str, Any]]) -> pd.DataFrame:
+    frame = pd.DataFrame(candidates)
+    if frame.empty:
+        return frame
+    return frame.sort_values(
+        [
+            "depth_ready",
+            "risk_income_gate_passed",
+            "drawdown_core_passed",
+            "capital_risk_stress_passed",
+            "strict_topbook_rescue_passed",
+            "latest_taker_residual_loss_fraction",
+            "capital_configured_cap_loss_fraction",
+            "capital_capture_needed_after_cap_loss",
+            "partial_rescue_max_residual_loss_usdc",
+            "income_p05_at_required_capture",
+            "drawdown_reward_to_trading_loss_ratio",
+            "avg_active_pair_notional",
+        ],
+        ascending=[False, False, False, False, False, True, True, True, True, False, False, True],
+    )
+
+
+def _write_progress(
+    *,
+    candidates: list[dict[str, Any]],
+    completed: int,
+    total: int,
+    started: float,
+    out: Path,
+    args: argparse.Namespace,
+    final: bool,
+) -> None:
+    progress_csv = Path(args.progress_csv) if args.progress_csv else out / "partial_rescue_config_progress.csv"
+    progress_json = Path(args.progress_json) if args.progress_json else out / "partial_rescue_config_progress.json"
+    progress_csv.parent.mkdir(parents=True, exist_ok=True)
+    progress_json.parent.mkdir(parents=True, exist_ok=True)
+    frame = _sorted_frame(candidates)
+    if not frame.empty:
+        frame.to_csv(progress_csv, index=False)
+        best = frame.iloc[0].to_dict()
+    else:
+        best = {}
+    elapsed = max(time.monotonic() - started, 0.0)
+    rate = completed / elapsed if elapsed > 0 else math.inf
+    remaining = (total - completed) / rate if rate and math.isfinite(rate) else math.inf
+    payload = {
+        "completed_configs": completed,
+        "total_configs": total,
+        "completed_fraction": completed / total if total else 1.0,
+        "elapsed_seconds": elapsed,
+        "configs_per_second": rate,
+        "estimated_seconds_remaining": remaining,
+        "final": final,
+        "best": _json_safe(best),
+        "progress_csv": str(progress_csv),
+        "safety": "progress checkpoint only; no private keys, order signing, order submission, or cancellation",
+    }
+    tmp = progress_json.with_suffix(progress_json.suffix + ".tmp")
+    tmp.write_text(json.dumps(_json_safe(payload), indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    tmp.replace(progress_json)
 
 
 def _lp_config_from_selected(selected: dict[str, Any], args: argparse.Namespace) -> LPConfig:
