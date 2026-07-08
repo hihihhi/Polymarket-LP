@@ -1,0 +1,373 @@
+#!/usr/bin/env python3
+"""Sweep LP quote size/residual caps under target-income + rescue-depth gates.
+
+This is a public-paper research selector. It consumes point-in-time public
+snapshots, generates quote intents for configurable LP parameters, then applies
+the same monthly target, bootstrap capture, CLOB depth, and partial-rescue
+residual-loss gates used by the live-paper watcher. It never signs, submits,
+cancels, or inspects orders.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import sys
+from dataclasses import asdict, dataclass
+from itertools import product
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from polymarket_lp.depth_gate import DepthReadinessConfig, evaluate_depth_readiness  # noqa: E402
+from polymarket_lp.lp_backtest import LPConfig, load_snapshots  # noqa: E402
+from polymarket_lp.paper import PaperAnalysisConfig, analyze_paper_quotes, build_paper_quotes  # noqa: E402
+from polymarket_lp.rescue_stress import RescueStressConfig, evaluate_rescue_stress  # noqa: E402
+from polymarket_lp.target import TargetMonitorConfig, target_monitor_from_summary  # noqa: E402
+from scripts.update_target_status import _bootstrap_target_from_quotes, _capture_stress_grid  # noqa: E402
+
+
+@dataclass(slots=True)
+class GridSelectorConfig:
+    target_monthly_usdc: float = 1_000.0
+    reward_to_loss_haircut: float = 8.0
+    capture_rate: float = 0.5
+    min_target_margin: float = 1.0
+    min_observation_hours: float = 0.0
+    min_quote_rows: int = 12
+    min_unique_markets: int = 2
+    min_book_scenarios: int = 12
+    max_active_pair_notional: float = 1_200.0
+    max_pending_quote_rate: float = 0.05
+    min_taker_rescue_feasible_rate: float = 0.80
+    min_taker_rescue_depth_fraction: float = 1.0
+    max_latest_taker_residual_loss_fraction: float = 0.05
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--snapshots", required=True)
+    p.add_argument("--out-dir", default="data/processed/partial_rescue_config_grid")
+    p.add_argument("--selected-quotes", default="")
+    p.add_argument("--quote-size-grid", default="250,300,325,350,375,400")
+    p.add_argument("--residual-loss-grid", default="25,50,75")
+    p.add_argument("--offset-grid", default="0.02")
+    p.add_argument("--density-grid", default="0.08,0.10,0.12")
+    p.add_argument("--safety-margin", type=float, default=0.015)
+    p.add_argument("--initial-capital", type=float, default=2000.0)
+    p.add_argument("--active-capital-limit", type=float, default=1200.0)
+    p.add_argument("--excluded-categories", default="sports,crypto")
+    p.add_argument("--max-recent-vol", type=float, default=0.006)
+    p.add_argument("--max-recent-jump", type=float, default=0.025)
+    p.add_argument("--vol-quote-multiplier", type=float, default=0.5)
+    p.add_argument("--target-monthly", type=float, default=1000.0)
+    p.add_argument("--reward-to-loss-haircut", type=float, default=8.0)
+    p.add_argument("--days-per-month", type=float, default=30.0)
+    p.add_argument("--capture-rate", type=float, default=0.5)
+    p.add_argument("--capture-rates", default="0.25,0.35,0.4,0.5,0.75,1.0")
+    p.add_argument("--min-target-margin", type=float, default=1.0)
+    p.add_argument("--min-observation-hours", type=float, default=0.0)
+    p.add_argument("--min-quote-rows", type=int, default=12)
+    p.add_argument("--min-unique-markets", type=int, default=2)
+    p.add_argument("--min-book-scenarios", type=int, default=12)
+    p.add_argument("--max-active-pair-notional", type=float, default=1200.0)
+    p.add_argument("--max-pending-quote-rate", type=float, default=0.05)
+    p.add_argument("--bootstrap-resamples", type=int, default=1000)
+    p.add_argument("--bootstrap-seed", type=int, default=101)
+    p.add_argument("--bootstrap-block-size", type=int, default=2)
+    p.add_argument("--max-reward-gap-seconds", type=float, default=300.0)
+    p.add_argument("--min-taker-rescue-feasible-rate", type=float, default=0.80)
+    p.add_argument("--min-taker-rescue-depth-fraction", type=float, default=1.0)
+    p.add_argument("--taker-rescue-min-pair-edge-per-share", type=float, default=0.0)
+    p.add_argument("--max-latest-taker-residual-loss-fraction", type=float, default=0.05)
+    return p.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    snapshots = load_snapshots(args.snapshots)
+    out = Path(args.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    selector = GridSelectorConfig(
+        target_monthly_usdc=args.target_monthly,
+        reward_to_loss_haircut=args.reward_to_loss_haircut,
+        capture_rate=args.capture_rate,
+        min_target_margin=args.min_target_margin,
+        min_observation_hours=args.min_observation_hours,
+        min_quote_rows=args.min_quote_rows,
+        min_unique_markets=args.min_unique_markets,
+        min_book_scenarios=args.min_book_scenarios,
+        max_active_pair_notional=args.max_active_pair_notional,
+        max_pending_quote_rate=args.max_pending_quote_rate,
+        min_taker_rescue_feasible_rate=args.min_taker_rescue_feasible_rate,
+        min_taker_rescue_depth_fraction=args.min_taker_rescue_depth_fraction,
+        max_latest_taker_residual_loss_fraction=args.max_latest_taker_residual_loss_fraction,
+    )
+
+    candidates: list[dict[str, Any]] = []
+    quote_by_key: dict[tuple[float, float, float, float], pd.DataFrame] = {}
+    for quote_size, residual_cap, offset, density in product(
+        _float_grid(args.quote_size_grid),
+        _float_grid(args.residual_loss_grid),
+        _float_grid(args.offset_grid),
+        _float_grid(args.density_grid),
+    ):
+        cfg = LPConfig(
+            quote_size_shares=quote_size,
+            quote_offset=offset,
+            safety_margin=args.safety_margin,
+            active_capital_limit=args.active_capital_limit,
+            excluded_categories=args.excluded_categories,
+            min_reward_density_per_day=density,
+            max_recent_vol=args.max_recent_vol,
+            max_recent_jump=args.max_recent_jump,
+            vol_quote_multiplier=args.vol_quote_multiplier,
+            partial_rescue_max_residual_loss_usdc=residual_cap,
+        )
+        quotes = build_paper_quotes(snapshots, cfg)
+        target_status = _target_status_from_quotes(
+            snapshots=snapshots,
+            quotes=quotes,
+            args=args,
+            selector=selector,
+        )
+        rescue = evaluate_rescue_stress(
+            quotes,
+            RescueStressConfig(
+                initial_capital=args.initial_capital,
+                require_taker_residual_loss=True,
+                taker_rescue_min_pair_edge_per_share=args.taker_rescue_min_pair_edge_per_share,
+                min_taker_rescue_depth_fraction=args.min_taker_rescue_depth_fraction,
+                min_taker_rescue_feasible_rate=args.min_taker_rescue_feasible_rate,
+                max_latest_taker_residual_loss_fraction=args.max_latest_taker_residual_loss_fraction,
+            ),
+        )
+        depth = evaluate_depth_readiness(
+            target_status=target_status,
+            rescue_stress=rescue,
+            cfg=DepthReadinessConfig(
+                target_monthly_usdc=args.target_monthly,
+                required_capture_rate=args.capture_rate,
+                min_observation_hours=args.min_observation_hours,
+                min_quote_rows=args.min_quote_rows,
+                min_unique_markets=args.min_unique_markets,
+                min_book_scenarios=args.min_book_scenarios,
+                min_taker_rescue_feasible_rate=args.min_taker_rescue_feasible_rate,
+                min_taker_rescue_pair_edge_per_share=args.taker_rescue_min_pair_edge_per_share,
+                min_taker_rescue_depth_fraction=args.min_taker_rescue_depth_fraction,
+                allow_partial_taker_rescue=True,
+                max_latest_taker_residual_loss_fraction=args.max_latest_taker_residual_loss_fraction,
+            ),
+        )
+        row = _candidate_row(
+            quote_size=quote_size,
+            residual_cap=residual_cap,
+            offset=offset,
+            density=density,
+            target_status=target_status,
+            rescue=rescue,
+            depth=depth,
+        )
+        candidates.append(row)
+        quote_by_key[(quote_size, residual_cap, offset, density)] = quotes
+
+    frame = pd.DataFrame(candidates)
+    if not frame.empty:
+        frame = frame.sort_values(
+            [
+                "depth_ready",
+                "risk_income_gate_passed",
+                "strict_topbook_rescue_passed",
+                "latest_taker_residual_loss_fraction",
+                "partial_rescue_max_residual_loss_usdc",
+                "income_p05_at_required_capture",
+                "avg_active_pair_notional",
+            ],
+            ascending=[False, False, False, True, True, False, True],
+        )
+    frame.to_csv(out / "partial_rescue_config_grid.csv", index=False)
+    selected = frame.iloc[0].to_dict() if len(frame) else {}
+    payload = {
+        "selection_status": _selection_status(selected),
+        "selector_config": asdict(selector),
+        "lp_grid": {
+            "quote_size_grid": _float_grid(args.quote_size_grid),
+            "residual_loss_grid": _float_grid(args.residual_loss_grid),
+            "offset_grid": _float_grid(args.offset_grid),
+            "density_grid": _float_grid(args.density_grid),
+            "active_capital_limit": args.active_capital_limit,
+            "excluded_categories": args.excluded_categories,
+            "max_recent_vol": args.max_recent_vol,
+            "max_recent_jump": args.max_recent_jump,
+            "vol_quote_multiplier": args.vol_quote_multiplier,
+        },
+        "selected": _json_safe(selected),
+        "csv": str(out / "partial_rescue_config_grid.csv"),
+        "safety": "paper research only; no private keys, order signing, order submission, or cancellation",
+    }
+    if selected:
+        key = (
+            float(selected["quote_size"]),
+            float(selected["partial_rescue_max_residual_loss_usdc"]),
+            float(selected["quote_offset"]),
+            float(selected["min_reward_density_per_day"]),
+        )
+        selected_quotes = Path(args.selected_quotes) if args.selected_quotes else out / "selected_quotes.csv"
+        selected_quotes.parent.mkdir(parents=True, exist_ok=True)
+        quote_by_key[key].to_csv(selected_quotes, index=False)
+        payload["selected_quotes"] = str(selected_quotes)
+    (out / "partial_rescue_config_selection.json").write_text(
+        json.dumps(_json_safe(payload), indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    print(json.dumps({"selection_json": str(out / "partial_rescue_config_selection.json"), "selected": _json_safe(selected)}, indent=2))
+
+
+def _target_status_from_quotes(
+    *,
+    snapshots: pd.DataFrame,
+    quotes: pd.DataFrame,
+    args: argparse.Namespace,
+    selector: GridSelectorConfig,
+) -> dict[str, Any]:
+    _, summary = analyze_paper_quotes(
+        snapshots,
+        quotes,
+        PaperAnalysisConfig(max_reward_gap_seconds=args.max_reward_gap_seconds),
+    )
+    target_cfg = TargetMonitorConfig(
+        target_monthly_usdc=args.target_monthly,
+        reward_to_loss_haircut=args.reward_to_loss_haircut,
+        days_per_month=args.days_per_month,
+        min_observation_hours=args.min_observation_hours,
+        min_unique_markets=args.min_unique_markets,
+        max_active_pair_notional=args.max_active_pair_notional,
+        max_pending_quote_rate=args.max_pending_quote_rate,
+    )
+    monitor = target_monitor_from_summary(summary, target_cfg)
+    bootstrap = _bootstrap_target_from_quotes(
+        quotes,
+        cfg=target_cfg,
+        max_reward_gap_seconds=args.max_reward_gap_seconds,
+        resamples=args.bootstrap_resamples,
+        seed=args.bootstrap_seed,
+        block_size=args.bootstrap_block_size,
+        capture_rate=args.capture_rate,
+        min_target_margin=args.min_target_margin,
+    )
+    return {
+        "paper_summary": summary,
+        "target_monitor": monitor,
+        "bootstrap_target": bootstrap,
+        "capture_stress_grid": _capture_stress_grid(
+            bootstrap,
+            capture_rates=_float_grid(args.capture_rates),
+            target_monthly_usdc=selector.target_monthly_usdc,
+            min_target_margin=selector.min_target_margin,
+        ),
+    }
+
+
+def _candidate_row(
+    *,
+    quote_size: float,
+    residual_cap: float,
+    offset: float,
+    density: float,
+    target_status: dict[str, Any],
+    rescue: dict[str, Any],
+    depth: dict[str, Any],
+) -> dict[str, Any]:
+    paper = _dict(target_status.get("paper_summary"))
+    bootstrap = _dict(target_status.get("bootstrap_target"))
+    depth_metrics = _dict(depth.get("metrics"))
+    depth_gates = _dict(depth.get("gates"))
+    rescue_metrics = _dict(rescue.get("metrics"))
+    risk_income_gate = bool(
+        depth_gates.get("income_p05_gate_passed")
+        and depth_gates.get("diversification_gate_passed")
+        and depth_gates.get("clob_quality_gate_passed")
+        and depth_gates.get("taker_rescue_rate_gate_passed")
+        and depth_gates.get("taker_depth_gate_passed")
+        and depth_gates.get("taker_residual_loss_gate_passed")
+    )
+    strict_topbook_rescue = bool(
+        _float(depth_metrics.get("taker_rescue_feasible_rate"), 0.0) >= 1.0
+        and _float(depth_metrics.get("taker_rescue_min_depth_fraction"), 0.0) >= 1.0
+        and _float(depth_metrics.get("latest_taker_residual_loss_fraction"), math.inf) <= 1e-12
+    )
+    return {
+        "quote_size": quote_size,
+        "partial_rescue_max_residual_loss_usdc": residual_cap,
+        "quote_offset": offset,
+        "min_reward_density_per_day": density,
+        "quote_rows": int(_float(paper.get("quote_rows"), 0.0)),
+        "quote_pair_intervals": int(_float(paper.get("quote_pair_intervals"), 0.0)),
+        "unique_markets_quoted": int(_float(paper.get("unique_markets_quoted"), 0.0)),
+        "duration_hours": _float(paper.get("duration_hours")),
+        "avg_active_pair_notional": _float(paper.get("avg_active_pair_notional")),
+        "max_active_pair_notional": _float(paper.get("max_active_pair_notional")),
+        "pending_quote_rate": _float(paper.get("pending_quote_rate")),
+        "stale_fill_rate": _float(paper.get("stale_fill_rate")),
+        "fill_proxy_rate": _float(paper.get("fill_proxy_rate")),
+        "bootstrap_intervals": int(_float(bootstrap.get("intervals"), 0.0)),
+        "net_monthly_p05": _float(bootstrap.get("net_monthly_p05")),
+        "income_p05_at_required_capture": _float(depth_metrics.get("income_p05_at_required_capture")),
+        "taker_rescue_feasible_rate": _float(depth_metrics.get("taker_rescue_feasible_rate")),
+        "taker_rescue_min_depth_fraction": _float(depth_metrics.get("taker_rescue_min_depth_fraction")),
+        "taker_size_weighted_rescue_fraction": _float(depth_metrics.get("taker_size_weighted_rescue_fraction")),
+        "latest_taker_residual_loss_to_zero": _float(depth_metrics.get("latest_taker_residual_loss_to_zero")),
+        "latest_taker_residual_loss_fraction": _float(depth_metrics.get("latest_taker_residual_loss_fraction")),
+        "taker_rescued_size_fraction_p05": _float(rescue_metrics.get("taker_rescued_size_fraction_p05")),
+        "strict_topbook_rescue_passed": strict_topbook_rescue,
+        "risk_income_gate_passed": risk_income_gate,
+        "depth_ready": bool(depth_gates.get("depth_ready")),
+        "depth_status": depth.get("status"),
+        "blockers": "; ".join(str(x) for x in depth.get("blockers", [])),
+    }
+
+
+def _selection_status(selected: dict[str, Any]) -> str:
+    if not selected:
+        return "no_candidates"
+    if bool(selected.get("depth_ready")):
+        return "selected_depth_ready"
+    if bool(selected.get("risk_income_gate_passed")):
+        return "selected_risk_income_passed_sample_not_ready"
+    return "selected_best_failed"
+
+
+def _float_grid(text: str) -> list[float]:
+    return [float(part.strip()) for part in str(text).split(",") if part.strip()]
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _float(value: Any, default: float = math.nan) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if hasattr(value, "item"):
+        return _json_safe(value.item())
+    return value
+
+
+if __name__ == "__main__":
+    main()
