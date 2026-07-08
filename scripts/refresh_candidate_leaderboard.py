@@ -80,6 +80,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-single-cluster-unhedged-loss-fraction", type=float, default=0.50)
     p.add_argument("--max-capture-needed-after-cap-loss", type=float, default=0.40)
     p.add_argument(
+        "--allow-after-cap-target-shortfall",
+        action="store_true",
+        help=(
+            "Treat same-month target shortfall after a configured shock as a warning, "
+            "while still enforcing no-ruin, cap-loss, and recovery-day gates."
+        ),
+    )
+    p.add_argument(
         "--max-input-staleness-seconds",
         type=float,
         default=0.0,
@@ -307,6 +315,7 @@ def evaluate_candidate_capital(
             target_monthly_usdc=args.target_monthly,
             reference_capture_rate=args.required_capture_rate,
             max_capture_needed_after_cap_loss=args.max_capture_needed_after_cap_loss,
+            require_after_cap_target=not args.allow_after_cap_target_shortfall,
             exit_slippage=args.exit_slippage,
         ),
     )

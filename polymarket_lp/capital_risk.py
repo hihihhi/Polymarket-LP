@@ -32,6 +32,7 @@ class CapitalRiskStressConfig:
     target_monthly_usdc: float = 1_000.0
     reference_capture_rate: float = 0.50
     max_capture_needed_after_cap_loss: float = 0.40
+    require_after_cap_target: bool = True
     exit_slippage: float = 0.005
     days_per_month: float = 30.0
 
@@ -193,6 +194,7 @@ def evaluate_capital_risk_stress(
         "max_pair_cost_per_share": max_pair_cost,
         "min_locked_pair_edge_usdc": min_pair_edge,
     }
+    capture_needed_gate_passed = capture_needed_after_cap_loss <= cfg.max_capture_needed_after_cap_loss
     gates = {
         "cash_reserve_gate_passed": cash_reserve_fraction >= cfg.min_cash_reserve_fraction,
         "latest_market_count_gate_passed": latest_markets >= cfg.min_latest_markets,
@@ -208,18 +210,20 @@ def evaluate_capital_risk_stress(
         "unhedged_loss_gate_passed": metrics["unhedged_loss_fraction_of_capital"] <= cfg.max_unhedged_loss_fraction,
         "configured_cap_loss_gate_passed": metrics["configured_inventory_cap_loss_fraction"] <= cfg.max_capped_loss_fraction,
         "configured_cap_recovery_gate_passed": capped_recovery_days <= cfg.max_capped_recovery_days,
-        "capture_needed_after_cap_loss_gate_passed": capture_needed_after_cap_loss
-        <= cfg.max_capture_needed_after_cap_loss,
+        "capture_needed_after_cap_loss_gate_passed": capture_needed_gate_passed
+        or not cfg.require_after_cap_target,
         "pair_lock_edge_gate_passed": min_pair_edge >= -1e-9 and max_pair_cost <= 1.0 + 1e-9,
     }
     gates["capital_risk_stress_passed"] = bool(all(gates.values()))
     blockers = _blockers(gates, cfg)
+    warnings = _warnings(capture_needed_gate_passed, capture_needed_after_cap_loss, cfg)
     return {
         "config": asdict(cfg),
         "metrics": metrics,
         "market_stress": market_rows,
         "gates": gates,
         "blockers": blockers,
+        "warnings": warnings,
         "status": "capital_risk_stress_passed" if gates["capital_risk_stress_passed"] else "capital_risk_stress_failed",
         "safety": _SAFETY,
     }
@@ -287,6 +291,19 @@ def _blockers(gates: dict[str, bool], cfg: CapitalRiskStressConfig) -> list[str]
         "pair_lock_edge_gate_passed": "two-sided pair fill is not locked non-negative",
     }
     return [message for gate, message in names.items() if not gates.get(gate, False)]
+
+
+def _warnings(
+    capture_needed_gate_passed: bool,
+    capture_needed_after_cap_loss: float,
+    cfg: CapitalRiskStressConfig,
+) -> list[str]:
+    if capture_needed_gate_passed or cfg.require_after_cap_target:
+        return []
+    return [
+        "after-cap same-month target shortfall accepted as warning under autonomous-recovery mode; "
+        f"capture needed after configured-cap loss is {capture_needed_after_cap_loss:.2%}"
+    ]
 
 
 def _empty_metrics() -> dict[str, Any]:

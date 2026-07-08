@@ -1292,6 +1292,26 @@ def test_capital_risk_stress_blocks_high_capture_needed_after_cap_loss() -> None
     assert not result["gates"]["capital_risk_stress_passed"]
 
 
+def test_capital_risk_autonomous_recovery_can_warn_on_after_cap_shortfall() -> None:
+    quotes = pd.DataFrame(
+        [
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m1", "cluster": "macro", "side": "YES", "bid_price": 0.5, "size_shares": 100, "active_order_notional_pair": 95},
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m1", "cluster": "macro", "side": "NO", "bid_price": 0.45, "size_shares": 100, "active_order_notional_pair": 95},
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m2", "cluster": "other", "side": "YES", "bid_price": 0.5, "size_shares": 100, "active_order_notional_pair": 95},
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m2", "cluster": "other", "side": "NO", "bid_price": 0.45, "size_shares": 100, "active_order_notional_pair": 95},
+        ]
+    )
+    result = evaluate_capital_risk_stress(
+        quotes,
+        target_status={"capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200.0}]},
+        cfg=CapitalRiskStressConfig(max_capture_needed_after_cap_loss=0.40, require_after_cap_target=False),
+    )
+    assert result["metrics"]["capture_needed_after_cap_loss"] > 0.40
+    assert result["gates"]["capture_needed_after_cap_loss_gate_passed"]
+    assert result["gates"]["capital_risk_stress_passed"]
+    assert result["warnings"]
+
+
 def test_allocation_selector_balances_income_and_survival() -> None:
     rows = [
         {
@@ -2316,6 +2336,56 @@ def test_candidate_leaderboard_reports_capture_needed_after_cap_loss() -> None:
     assert leader["capture_needed_after_cap_loss"] == pytest.approx(0.40625)
     assert leader["after_cap_loss_income_buffer_at_required_capture"] == pytest.approx(0.3)
     assert leader["capital_after_cap_loss_target_passed"]
+
+
+def test_candidate_leaderboard_allows_after_cap_shortfall_as_warning_when_configured() -> None:
+    gate = {
+        "status": "depth_not_ready",
+        "config": {"target_monthly_usdc": 1000},
+        "metrics": {
+            "duration_hours": 1,
+            "quote_rows": 40,
+            "unique_markets_quoted": 4,
+            "income_p05_at_required_capture": 1100,
+            "required_capture_rate": 0.5,
+            "taker_rescue_feasible_rate": 1,
+            "taker_size_weighted_rescue_fraction": 1,
+            "latest_taker_residual_loss_to_zero": 0,
+            "latest_taker_residual_loss_fraction": 0,
+        },
+        "gates": {
+            "depth_ready": False,
+            "income_p05_gate_passed": True,
+            "clob_quality_gate_passed": True,
+            "taker_rescue_rate_gate_passed": True,
+            "taker_pair_edge_gate_passed": True,
+            "taker_depth_gate_passed": True,
+            "taker_residual_loss_gate_passed": True,
+            "sample_hours_gate_passed": False,
+            "quote_rows_gate_passed": True,
+            "book_scenario_gate_passed": True,
+        },
+    }
+    capital = {
+        "status": "capital_risk_stress_passed",
+        "config": {"require_after_cap_target": False},
+        "metrics": {
+            "cash_reserve_fraction": 0.70,
+            "unhedged_loss_fraction_of_capital": 0.20,
+            "configured_inventory_cap_loss_to_zero": 250,
+            "configured_inventory_cap_loss_fraction": 0.125,
+            "capped_recovery_days_at_p05_income": 6.0,
+        },
+        "warnings": ["configured-cap loss leaves p05 monthly income below target"],
+        "blockers": [],
+    }
+    result = build_candidate_leaderboard([CandidateEvidence("candidate", gate, capital_risk=capital)])
+    leader = result["leader"]
+    assert not leader["capital_after_cap_loss_target_passed"]
+    assert not leader["capital_after_cap_loss_target_required"]
+    assert leader["capital_core_passed"]
+    assert leader["capital_warnings"]
+    assert "configured-cap loss leaves p05 monthly income below target" not in leader["capital_blockers"]
 
 
 def test_candidate_leaderboard_does_not_promote_under_minimum_rows_over_mature_sample() -> None:

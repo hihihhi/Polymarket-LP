@@ -47,11 +47,13 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
     drawdown_metrics = _dict(drawdown.get("metrics"))
     drawdown_gates = _dict(drawdown.get("gates"))
     capital = _dict(candidate.capital_risk)
+    capital_config = _dict(capital.get("config"))
     capital_metrics = _dict(capital.get("metrics"))
     lp_config = _dict(drawdown.get("lp_config"))
     blockers = gate.get("blockers") if isinstance(gate.get("blockers"), list) else []
     drawdown_blockers = drawdown.get("blockers") if isinstance(drawdown.get("blockers"), list) else []
     capital_blockers = list(capital.get("blockers")) if isinstance(capital.get("blockers"), list) else []
+    capital_warnings = list(capital.get("warnings")) if isinstance(capital.get("warnings"), list) else []
     metadata = _dict(candidate.metadata)
     freshness = _dict(metadata.get("_input_freshness"))
     has_drawdown_guard = bool(drawdown)
@@ -80,14 +82,18 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         and math.isfinite(target_monthly)
         and capital_after_configured_cap_loss >= target_monthly
     )
+    after_cap_target_required = bool(capital_config.get("require_after_cap_target", True))
     drawdown_core_passed = bool(drawdown.get("risk_core_passed", True)) if has_drawdown_guard else True
     capital_core_passed = (
-        bool(capital.get("status") == "capital_risk_stress_passed") and after_cap_target_passed
+        bool(capital.get("status") == "capital_risk_stress_passed")
+        and (after_cap_target_passed or not after_cap_target_required)
         if has_capital_risk
         else True
     )
-    if has_capital_risk and not after_cap_target_passed:
+    if has_capital_risk and not after_cap_target_passed and after_cap_target_required:
         capital_blockers.append("configured-cap loss leaves p05 monthly income below target")
+    elif has_capital_risk and not after_cap_target_passed:
+        capital_warnings.append("configured-cap loss leaves p05 monthly income below target")
     drawdown_sample_passed = (
         bool(drawdown_gates.get("sample_hours_gate_passed", False)) if has_drawdown_guard else True
     )
@@ -184,6 +190,7 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         "capital_configured_cap_recovery_days": _float(capital_metrics.get("capped_recovery_days_at_p05_income"), math.nan),
         "capital_after_configured_cap_loss_monthly": capital_after_configured_cap_loss,
         "capital_after_cap_loss_target_passed": after_cap_target_passed,
+        "capital_after_cap_loss_target_required": after_cap_target_required,
         "capital_pair_cost_per_share": _float(capital_metrics.get("max_pair_cost_per_share"), math.nan),
         "input_snapshot_age_seconds": _float(_dict(freshness.get("snapshot")).get("age_seconds"), math.nan),
         "input_quotes_age_seconds": _float(_dict(freshness.get("quotes")).get("age_seconds"), math.nan),
@@ -192,6 +199,7 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         "blockers": [str(x) for x in blockers],
         "drawdown_blockers": [str(x) for x in drawdown_blockers],
         "capital_blockers": [str(x) for x in capital_blockers],
+        "capital_warnings": [str(x) for x in capital_warnings],
         "metadata": metadata,
     }
     row["promotion_core_passed"] = bool(
