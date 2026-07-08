@@ -43,9 +43,12 @@ def config_from_lp_manifest(
     """Overlay paper/live LPConfig values from a run manifest onto stress config."""
 
     out = cfg or CapitalRiskStressConfig()
-    lp_cfg = manifest.get("lp_config", {}) if isinstance(manifest, dict) else {}
-    if not isinstance(lp_cfg, dict):
+    if not isinstance(manifest, dict):
         return out
+    lp_cfg = manifest.get("lp_config", {})
+    if not isinstance(lp_cfg, dict):
+        lp_cfg = {}
+    merged = {**lp_cfg, **manifest}
     updates: dict[str, float] = {}
     for key in [
         "initial_capital",
@@ -54,8 +57,8 @@ def config_from_lp_manifest(
         "max_cluster_unpaired",
         "exit_slippage",
     ]:
-        if key in lp_cfg:
-            updates[key] = _float(lp_cfg.get(key), getattr(out, key))
+        if key in merged:
+            updates[key] = _float(merged.get(key), getattr(out, key))
     return replace(out, **updates)
 
 

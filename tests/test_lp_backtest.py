@@ -30,7 +30,11 @@ from polymarket_lp.paper import (
 from polymarket_lp.target import TargetMonitorConfig, target_monitor_from_summary
 from polymarket_lp.telemetry import ExecutionTelemetryConfig, audit_execution_telemetry
 from polymarket_lp.deployment_gate import DeploymentReadinessConfig, evaluate_deployment_readiness
-from polymarket_lp.capital_risk import CapitalRiskStressConfig, evaluate_capital_risk_stress
+from polymarket_lp.capital_risk import (
+    CapitalRiskStressConfig,
+    config_from_lp_manifest,
+    evaluate_capital_risk_stress,
+)
 from polymarket_lp.allocation import AllocationSelectionConfig, select_allocation
 from polymarket_lp.proof import ObjectiveProofConfig, evaluate_objective_proof
 from polymarket_lp.sustainability import SustainabilityStressConfig, evaluate_sustainability_stress
@@ -2434,6 +2438,10 @@ def test_launch_live_paper_candidate_generates_parameterized_public_scripts(tmp_
         partial_rescue_max_residual_loss_usdc=5,
         min_reward_density_per_day=0.06,
         active_capital_limit=1200,
+        max_unpaired_per_market=40,
+        max_total_unpaired=300,
+        max_cluster_unpaired=160,
+        max_unpaired_minutes=20,
         iterations=2,
         extension_iterations=3,
         interval_seconds=60,
@@ -2442,12 +2450,18 @@ def test_launch_live_paper_candidate_generates_parameterized_public_scripts(tmp_
     assert manifest["pid"] == 0
     assert manifest["quote_size"] == 200
     assert manifest["partial_rescue_max_residual_loss_usdc"] == 5
+    assert manifest["max_unpaired_per_market"] == 40
+    assert manifest["lp_config"]["max_total_unpaired"] == 300
     assert manifest["safety"].startswith("public CLOB/Gamma reads only")
     collector = tmp_path.joinpath("unit_run", "run_q200_cap5_d006_collector.ps1").read_text(encoding="utf-8")
     watcher = tmp_path.joinpath("unit_run", "run_q200_cap5_d006_watcher.ps1").read_text(encoding="utf-8")
     extend = tmp_path.joinpath("unit_run", "run_q200_cap5_d006_extend_to24h_and_audit.ps1").read_text(encoding="utf-8")
     assert "--quote-size 200" in collector
     assert "--partial-rescue-max-residual-loss-usdc 5" in collector
+    assert "--max-unpaired-per-market 40" in collector
+    assert "--max-total-unpaired 300" in collector
+    assert "--max-cluster-unpaired 160" in collector
+    assert "--max-unpaired-minutes 20" in collector
     assert "--min-reward-density-per-day 0.06" in collector
     assert "--min-observation-hours 6" in watcher
     assert "--min-unique-markets 4" in watcher
@@ -2462,6 +2476,10 @@ def test_lp_config_from_manifest_maps_candidate_risk_parameters() -> None:
             "partial_rescue_max_residual_loss_usdc": 1,
             "min_reward_density_per_day": 0.06,
             "active_capital_limit": 1200,
+            "max_unpaired_per_market": 40,
+            "max_total_unpaired": 300,
+            "max_cluster_unpaired": 160,
+            "max_unpaired_minutes": 20,
             "quote_offset": 0.02,
             "max_recent_vol": 0.006,
             "max_recent_jump": 0.025,
@@ -2472,6 +2490,59 @@ def test_lp_config_from_manifest_maps_candidate_risk_parameters() -> None:
     assert cfg.partial_rescue_max_residual_loss_usdc == 1
     assert cfg.min_reward_density_per_day == 0.06
     assert cfg.active_capital_limit == 1200
+    assert cfg.max_unpaired_per_market == 40
+    assert cfg.max_total_unpaired == 300
+    assert cfg.max_cluster_unpaired == 160
+    assert cfg.max_unpaired_minutes == 20
+
+
+def test_paper_replay_config_exposes_inventory_caps() -> None:
+    cfg = make_lp_config(
+        argparse.Namespace(
+            initial_capital=2000,
+            quote_size=200,
+            quote_offset=0.02,
+            safety_margin=0.015,
+            max_unpaired_per_market=35,
+            max_total_unpaired=250,
+            max_cluster_unpaired=140,
+            max_unpaired_minutes=18,
+            active_capital_limit=1200,
+            min_reward_daily=0.0,
+            max_market_competitiveness=1.0,
+            allowed_categories="",
+            excluded_categories="sports,crypto",
+            min_reward_density_per_day=0.06,
+            recent_vol_window=6,
+            max_recent_vol=0.006,
+            max_recent_jump=0.025,
+            vol_quote_multiplier=0.5,
+            depth_cap_quote_size=False,
+            depth_quote_size_fraction=1.0,
+            min_depth_capped_quote_size=1.0,
+            partial_rescue_max_residual_loss_usdc=0.5,
+            risk_governor_json="",
+        )
+    )
+    assert cfg.max_unpaired_per_market == 35
+    assert cfg.max_total_unpaired == 250
+    assert cfg.max_cluster_unpaired == 140
+    assert cfg.max_unpaired_minutes == 18
+
+
+def test_capital_risk_config_from_manifest_accepts_top_level_inventory_caps() -> None:
+    cfg = config_from_lp_manifest(
+        {
+            "initial_capital": 2000,
+            "max_unpaired_per_market": 35,
+            "max_total_unpaired": 250,
+            "max_cluster_unpaired": 140,
+        },
+        CapitalRiskStressConfig(),
+    )
+    assert cfg.max_unpaired_per_market == 35
+    assert cfg.max_total_unpaired == 250
+    assert cfg.max_cluster_unpaired == 140
 
 
 def test_lp_config_from_manifest_infers_legacy_candidate_text() -> None:

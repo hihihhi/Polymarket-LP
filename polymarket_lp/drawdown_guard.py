@@ -43,11 +43,19 @@ def lp_config_from_manifest(manifest: dict[str, Any], base: LPConfig | None = No
     density = _num(merged.get("min_reward_density_per_day"), math.nan)
     quote_offset = _num(merged.get("quote_offset"), math.nan)
     active_capital_limit = _num(merged.get("active_capital_limit"), math.nan)
+    max_unpaired_per_market = _num(merged.get("max_unpaired_per_market"), math.nan)
+    max_total_unpaired = _num(merged.get("max_total_unpaired"), math.nan)
+    max_cluster_unpaired = _num(merged.get("max_cluster_unpaired"), math.nan)
+    max_unpaired_minutes = _num(merged.get("max_unpaired_minutes"), math.nan)
     values = {
         "initial_capital": _num(merged.get("initial_capital"), cfg.initial_capital),
         "quote_size_shares": quote_size if math.isfinite(quote_size) else _infer_text_number(text, r"(?:^|[^a-z0-9])q(\d+(?:\.\d+)?)", cfg.quote_size_shares),
         "quote_offset": quote_offset if math.isfinite(quote_offset) else _infer_text_number(text, r"(?:^|[^a-z0-9])offset(\d+(?:\.\d+)?)", cfg.quote_offset),
         "safety_margin": _num(merged.get("safety_margin"), cfg.safety_margin),
+        "max_unpaired_per_market": max_unpaired_per_market if math.isfinite(max_unpaired_per_market) else cfg.max_unpaired_per_market,
+        "max_total_unpaired": max_total_unpaired if math.isfinite(max_total_unpaired) else cfg.max_total_unpaired,
+        "max_cluster_unpaired": max_cluster_unpaired if math.isfinite(max_cluster_unpaired) else cfg.max_cluster_unpaired,
+        "max_unpaired_minutes": max_unpaired_minutes if math.isfinite(max_unpaired_minutes) else cfg.max_unpaired_minutes,
         "active_capital_limit": active_capital_limit if math.isfinite(active_capital_limit) else _infer_text_number(text, r"(?:^|[^a-z0-9])active[_-]?cap(\d+(?:\.\d+)?)", cfg.active_capital_limit),
         "excluded_categories": str(merged.get("excluded_categories", cfg.excluded_categories)),
         "min_reward_density_per_day": density if math.isfinite(density) else _infer_density(text, cfg.min_reward_density_per_day),

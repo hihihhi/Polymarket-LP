@@ -41,6 +41,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--quote-size", type=float, default=800)
     p.add_argument("--quote-offset", type=float, default=0.035)
     p.add_argument("--safety-margin", type=float, default=0.015)
+    p.add_argument("--max-unpaired-per-market", type=float, default=LPConfig().max_unpaired_per_market)
+    p.add_argument("--max-total-unpaired", type=float, default=LPConfig().max_total_unpaired)
+    p.add_argument("--max-cluster-unpaired", type=float, default=LPConfig().max_cluster_unpaired)
+    p.add_argument("--max-unpaired-minutes", type=float, default=LPConfig().max_unpaired_minutes)
     p.add_argument("--active-capital-limit", type=float, default=1900)
     p.add_argument("--min-reward-daily", type=float, default=0.0)
     p.add_argument("--max-market-competitiveness", type=float, default=1.0)
@@ -66,6 +70,10 @@ def make_lp_config(args: argparse.Namespace) -> LPConfig:
         quote_size_shares=args.quote_size,
         quote_offset=args.quote_offset,
         safety_margin=args.safety_margin,
+        max_unpaired_per_market=getattr(args, "max_unpaired_per_market", LPConfig().max_unpaired_per_market),
+        max_total_unpaired=getattr(args, "max_total_unpaired", LPConfig().max_total_unpaired),
+        max_cluster_unpaired=getattr(args, "max_cluster_unpaired", LPConfig().max_cluster_unpaired),
+        max_unpaired_minutes=getattr(args, "max_unpaired_minutes", LPConfig().max_unpaired_minutes),
         active_capital_limit=args.active_capital_limit,
         min_reward_daily=args.min_reward_daily,
         max_market_competitiveness=args.max_market_competitiveness,

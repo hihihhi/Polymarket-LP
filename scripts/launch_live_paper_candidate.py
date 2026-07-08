@@ -33,6 +33,10 @@ class LaunchCandidateConfig:
     reward_to_loss_haircut: float = 8.03937017359762
     quote_offset: float = 0.02
     safety_margin: float = 0.015
+    max_unpaired_per_market: float = 60.0
+    max_total_unpaired: float = 450.0
+    max_cluster_unpaired: float = 250.0
+    max_unpaired_minutes: float = 30.0
     excluded_categories: str = "sports,crypto"
     max_recent_vol: float = 0.006
     max_recent_jump: float = 0.025
@@ -81,6 +85,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--reward-to-loss-haircut", type=float, default=8.03937017359762)
     p.add_argument("--quote-offset", type=float, default=0.02)
     p.add_argument("--safety-margin", type=float, default=0.015)
+    p.add_argument("--max-unpaired-per-market", type=float, default=60.0)
+    p.add_argument("--max-total-unpaired", type=float, default=450.0)
+    p.add_argument("--max-cluster-unpaired", type=float, default=250.0)
+    p.add_argument("--max-unpaired-minutes", type=float, default=30.0)
     p.add_argument("--excluded-categories", default="sports,crypto")
     p.add_argument("--max-recent-vol", type=float, default=0.006)
     p.add_argument("--max-recent-jump", type=float, default=0.025)
@@ -113,6 +121,10 @@ def main() -> None:
         reward_to_loss_haircut=ns.reward_to_loss_haircut,
         quote_offset=ns.quote_offset,
         safety_margin=ns.safety_margin,
+        max_unpaired_per_market=ns.max_unpaired_per_market,
+        max_total_unpaired=ns.max_total_unpaired,
+        max_cluster_unpaired=ns.max_cluster_unpaired,
+        max_unpaired_minutes=ns.max_unpaired_minutes,
         excluded_categories=ns.excluded_categories,
         max_recent_vol=ns.max_recent_vol,
         max_recent_jump=ns.max_recent_jump,
@@ -178,6 +190,27 @@ def write_launch_artifacts(
         "partial_rescue_max_residual_loss_usdc": cfg.partial_rescue_max_residual_loss_usdc,
         "min_reward_density_per_day": cfg.min_reward_density_per_day,
         "active_capital_limit": cfg.active_capital_limit,
+        "max_unpaired_per_market": cfg.max_unpaired_per_market,
+        "max_total_unpaired": cfg.max_total_unpaired,
+        "max_cluster_unpaired": cfg.max_cluster_unpaired,
+        "max_unpaired_minutes": cfg.max_unpaired_minutes,
+        "lp_config": {
+            "initial_capital": cfg.initial_capital,
+            "quote_size_shares": cfg.quote_size,
+            "quote_offset": cfg.quote_offset,
+            "safety_margin": cfg.safety_margin,
+            "max_unpaired_per_market": cfg.max_unpaired_per_market,
+            "max_total_unpaired": cfg.max_total_unpaired,
+            "max_cluster_unpaired": cfg.max_cluster_unpaired,
+            "max_unpaired_minutes": cfg.max_unpaired_minutes,
+            "active_capital_limit": cfg.active_capital_limit,
+            "excluded_categories": cfg.excluded_categories,
+            "min_reward_density_per_day": cfg.min_reward_density_per_day,
+            "max_recent_vol": cfg.max_recent_vol,
+            "max_recent_jump": cfg.max_recent_jump,
+            "vol_quote_multiplier": cfg.vol_quote_multiplier,
+            "partial_rescue_max_residual_loss_usdc": cfg.partial_rescue_max_residual_loss_usdc,
+        },
         "snapshot": str(paths["snapshot"]),
         "quotes": str(paths["quotes"]),
         "manifest": str(paths["collector_manifest"]),
@@ -244,6 +277,10 @@ def _collector_script(cfg: LaunchCandidateConfig, p: dict[str, Path]) -> str:
                 "--max-events {max_events} --include-clob-books --request-timeout-seconds {timeout} "
                 "--sleep-between-book-requests-seconds {sleep} --initial-capital {capital} "
                 "--quote-size {qsize} --quote-offset {offset} --safety-margin {margin} "
+                "--max-unpaired-per-market {max_unpaired_market} "
+                "--max-total-unpaired {max_total_unpaired} "
+                "--max-cluster-unpaired {max_cluster_unpaired} "
+                "--max-unpaired-minutes {max_unpaired_minutes} "
                 "--active-capital-limit {active_cap} --excluded-categories {excluded} "
                 "--min-reward-density-per-day {density} --recent-vol-window 6 "
                 "--max-recent-vol {max_vol} --max-recent-jump {max_jump} "
@@ -262,6 +299,10 @@ def _collector_script(cfg: LaunchCandidateConfig, p: dict[str, Path]) -> str:
                 qsize=cfg.quote_size,
                 offset=cfg.quote_offset,
                 margin=cfg.safety_margin,
+                max_unpaired_market=cfg.max_unpaired_per_market,
+                max_total_unpaired=cfg.max_total_unpaired,
+                max_cluster_unpaired=cfg.max_cluster_unpaired,
+                max_unpaired_minutes=cfg.max_unpaired_minutes,
                 active_cap=cfg.active_capital_limit,
                 excluded=cfg.excluded_categories,
                 density=cfg.min_reward_density_per_day,
@@ -344,6 +385,10 @@ def _extend24_script(
                 "--max-events {max_events} --include-clob-books --request-timeout-seconds {timeout} "
                 "--sleep-between-book-requests-seconds {sleep} --initial-capital {capital} "
                 "--quote-size {qsize} --quote-offset {offset} --safety-margin {margin} "
+                "--max-unpaired-per-market {max_unpaired_market} "
+                "--max-total-unpaired {max_total_unpaired} "
+                "--max-cluster-unpaired {max_cluster_unpaired} "
+                "--max-unpaired-minutes {max_unpaired_minutes} "
                 "--active-capital-limit {active_cap} --excluded-categories {excluded} "
                 "--min-reward-density-per-day {density} --recent-vol-window 6 "
                 "--max-recent-vol {max_vol} --max-recent-jump {max_jump} "
@@ -362,6 +407,10 @@ def _extend24_script(
                 qsize=cfg.quote_size,
                 offset=cfg.quote_offset,
                 margin=cfg.safety_margin,
+                max_unpaired_market=cfg.max_unpaired_per_market,
+                max_total_unpaired=cfg.max_total_unpaired,
+                max_cluster_unpaired=cfg.max_cluster_unpaired,
+                max_unpaired_minutes=cfg.max_unpaired_minutes,
                 active_cap=cfg.active_capital_limit,
                 excluded=cfg.excluded_categories,
                 density=cfg.min_reward_density_per_day,
