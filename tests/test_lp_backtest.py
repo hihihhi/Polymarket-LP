@@ -2179,6 +2179,97 @@ def test_candidate_leaderboard_exposes_and_prefers_lower_inventory_pressure() ->
     assert result["leader"]["drawdown_max_active_order_fraction"] == 0.40
 
 
+def test_candidate_leaderboard_reports_capture_needed_after_cap_loss() -> None:
+    gate = {
+        "status": "depth_not_ready",
+        "config": {"target_monthly_usdc": 1000},
+        "metrics": {
+            "duration_hours": 1,
+            "quote_rows": 40,
+            "unique_markets_quoted": 4,
+            "income_p05_at_required_capture": 1600,
+            "required_capture_rate": 0.5,
+            "taker_rescue_feasible_rate": 1,
+            "taker_size_weighted_rescue_fraction": 1,
+            "latest_taker_residual_loss_to_zero": 0,
+            "latest_taker_residual_loss_fraction": 0,
+        },
+        "gates": {
+            "depth_ready": False,
+            "income_p05_gate_passed": True,
+            "clob_quality_gate_passed": True,
+            "taker_rescue_rate_gate_passed": True,
+            "taker_pair_edge_gate_passed": True,
+            "taker_depth_gate_passed": True,
+            "taker_residual_loss_gate_passed": True,
+            "sample_hours_gate_passed": False,
+            "quote_rows_gate_passed": True,
+            "book_scenario_gate_passed": True,
+        },
+    }
+    capital = {
+        "status": "capital_risk_stress_passed",
+        "metrics": {
+            "cash_reserve_fraction": 0.55,
+            "unhedged_loss_fraction_of_capital": 0.30,
+            "configured_inventory_cap_loss_to_zero": 300,
+            "configured_inventory_cap_loss_fraction": 0.15,
+            "capped_recovery_days_at_p05_income": 5.0,
+        },
+        "blockers": [],
+    }
+    result = build_candidate_leaderboard([CandidateEvidence("candidate", gate, capital_risk=capital)])
+    leader = result["leader"]
+    assert leader["capture_needed_for_target"] == pytest.approx(0.3125)
+    assert leader["capture_needed_after_cap_loss"] == pytest.approx(0.40625)
+    assert leader["after_cap_loss_income_buffer_at_required_capture"] == pytest.approx(0.3)
+    assert leader["capital_after_cap_loss_target_passed"]
+
+
+def test_candidate_leaderboard_does_not_promote_under_minimum_rows_over_mature_sample() -> None:
+    def gate(name: str, income: float, rows: int, hours: float) -> CandidateEvidence:
+        row_gate_passed = rows >= 24
+        gate_doc = {
+            "status": "depth_not_ready",
+            "config": {"target_monthly_usdc": 1000},
+            "metrics": {
+                "duration_hours": hours,
+                "quote_rows": rows,
+                "unique_markets_quoted": 5,
+                "income_p05_at_required_capture": income,
+                "required_capture_rate": 0.5,
+                "taker_rescue_feasible_rate": 1,
+                "taker_size_weighted_rescue_fraction": 1,
+                "latest_taker_residual_loss_to_zero": 0,
+                "latest_taker_residual_loss_fraction": 0,
+            },
+            "gates": {
+                "depth_ready": False,
+                "income_p05_gate_passed": True,
+                "clob_quality_gate_passed": True,
+                "taker_rescue_rate_gate_passed": True,
+                "taker_pair_edge_gate_passed": True,
+                "taker_depth_gate_passed": True,
+                "taker_residual_loss_gate_passed": True,
+                "sample_hours_gate_passed": False,
+                "quote_rows_gate_passed": row_gate_passed,
+                "book_scenario_gate_passed": row_gate_passed,
+                "diversification_gate_passed": True,
+            },
+        }
+        return CandidateEvidence(name, gate_doc)
+
+    result = build_candidate_leaderboard(
+        [
+            gate("immature_high_income", 1800, 20, 0.2),
+            gate("mature_enough_rows", 1650, 80, 1.4),
+        ]
+    )
+    assert result["leader"]["name"] == "mature_enough_rows"
+    assert not result["candidates"][1]["quote_rows_gate_passed"]
+    assert result["candidates"][0]["quote_rows_gate_passed"]
+
+
 def test_refresh_candidate_leaderboard_parses_named_paths_safely() -> None:
     assert _split_named_path("q300=C:/tmp/bg.json", "--candidate") == ("q300", "C:/tmp/bg.json")
     assert _safe_name("q300/cap10 d0.06") == "q300_cap10_d0.06"

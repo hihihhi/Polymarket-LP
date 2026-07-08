@@ -402,8 +402,8 @@ def _markdown(result: dict[str, Any]) -> str:
         f"Status: `{result['status']}`",
         f"Leader policy: `{result.get('leader_policy', 'n/a')}`",
         "",
-        "| Rank | Candidate | Status | p05/mo @ capture | After cap loss | Quote | Active cap | Rescue cap | Cap loss | Cap recovery | Cash reserve | Mkt active | Cluster active | Hours | Rows | Markets | Rescue feasible | Residual loss | Max active | DD guard | Cap guard | Note |",
-        "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
+        "| Rank | Candidate | Status | p05/mo @ capture | After cap loss | Req capture | Req capture after cap | After-cap buffer | Quote | Active cap | Rescue cap | Cap loss | Cap recovery | Cash reserve | Mkt active | Cluster active | Hours | Rows | Markets | Rescue feasible | Residual loss | Max active | DD guard | Cap guard | Note |",
+        "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
     ]
     for idx, row in enumerate(result.get("candidates", []), start=1):
         lines.append(
@@ -415,6 +415,9 @@ def _markdown(result: dict[str, Any]) -> str:
                     str(row.get("status", "")),
                     _money(row.get("income_p05_at_required_capture")),
                     _money(row.get("capital_after_configured_cap_loss_monthly")),
+                    _pct(row.get("capture_needed_for_target")),
+                    _pct(row.get("capture_needed_after_cap_loss")),
+                    _pct(row.get("after_cap_loss_income_buffer_at_required_capture")),
                     _shares(row.get("configured_quote_size_shares")),
                     _money(row.get("configured_active_capital_limit")),
                     _money(row.get("configured_residual_loss_cap_usdc")),
@@ -453,6 +456,8 @@ def _markdown(result: dict[str, Any]) -> str:
                     f"rescue cap {_money(item.get('configured_residual_loss_cap_usdc'))}; hours {_num(item.get('duration_hours'), 2)}; "
                     f"cap loss {_money(item.get('capital_configured_cap_loss_usdc'))}; cap recovery {_num(item.get('capital_configured_cap_recovery_days'), 2)}d; "
                     f"after-cap p05 {_money(item.get('capital_after_configured_cap_loss_monthly'))}; "
+                    f"capture needed after cap {_pct(item.get('capture_needed_after_cap_loss'))}; "
+                    f"after-cap buffer {_pct(item.get('after_cap_loss_income_buffer_at_required_capture'))}; "
                     f"single-market active {_pct(item.get('capital_single_market_active_fraction'))}; "
                     f"single-cluster active {_pct(item.get('capital_single_cluster_active_fraction'))}; "
                     f"drawdown guard {item.get('drawdown_guard_status')}; capital guard {item.get('capital_risk_status')}."
