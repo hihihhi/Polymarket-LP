@@ -11,6 +11,7 @@ class CandidateEvidence:
     gate: dict[str, Any]
     metadata: dict[str, Any] | None = None
     drawdown_guard: dict[str, Any] | None = None
+    capital_risk: dict[str, Any] | None = None
 
 
 def build_candidate_leaderboard(candidates: Iterable[CandidateEvidence]) -> dict[str, Any]:
@@ -42,14 +43,37 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
     drawdown = _dict(candidate.drawdown_guard)
     metrics = _dict(gate.get("metrics"))
     gates = _dict(gate.get("gates"))
+    gate_config = _dict(gate.get("config"))
     drawdown_metrics = _dict(drawdown.get("metrics"))
     drawdown_gates = _dict(drawdown.get("gates"))
+    capital = _dict(candidate.capital_risk)
+    capital_metrics = _dict(capital.get("metrics"))
     lp_config = _dict(drawdown.get("lp_config"))
     blockers = gate.get("blockers") if isinstance(gate.get("blockers"), list) else []
     drawdown_blockers = drawdown.get("blockers") if isinstance(drawdown.get("blockers"), list) else []
+    capital_blockers = list(capital.get("blockers")) if isinstance(capital.get("blockers"), list) else []
     metadata = _dict(candidate.metadata)
     has_drawdown_guard = bool(drawdown)
+    has_capital_risk = bool(capital)
+    income_p05 = _float(metrics.get("income_p05_at_required_capture"), math.nan)
+    target_monthly = _float(gate_config.get("target_monthly_usdc"), math.nan)
+    capital_configured_cap_loss = _float(capital_metrics.get("configured_inventory_cap_loss_to_zero"), math.nan)
+    capital_after_configured_cap_loss = income_p05 - capital_configured_cap_loss
+    after_cap_target_passed = (
+        True
+        if not has_capital_risk
+        else math.isfinite(capital_after_configured_cap_loss)
+        and math.isfinite(target_monthly)
+        and capital_after_configured_cap_loss >= target_monthly
+    )
     drawdown_core_passed = bool(drawdown.get("risk_core_passed", True)) if has_drawdown_guard else True
+    capital_core_passed = (
+        bool(capital.get("status") == "capital_risk_stress_passed") and after_cap_target_passed
+        if has_capital_risk
+        else True
+    )
+    if has_capital_risk and not after_cap_target_passed:
+        capital_blockers.append("configured-cap loss leaves p05 monthly income below target")
     drawdown_sample_passed = (
         bool(drawdown_gates.get("sample_hours_gate_passed", False)) if has_drawdown_guard else True
     )
@@ -76,10 +100,14 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         "drawdown_core_passed": drawdown_core_passed,
         "drawdown_sample_passed": drawdown_sample_passed,
         "drawdown_guard_passed": drawdown_guard_passed,
+        "has_capital_risk": has_capital_risk,
+        "capital_risk_status": str(capital.get("status", "not_evaluated")),
+        "capital_core_passed": capital_core_passed,
         "duration_hours": _float(metrics.get("duration_hours"), 0.0),
         "quote_rows": int(_float(metrics.get("quote_rows"), 0.0)),
         "unique_markets_quoted": int(_float(metrics.get("unique_markets_quoted"), 0.0)),
-        "income_p05_at_required_capture": _float(metrics.get("income_p05_at_required_capture"), math.nan),
+        "income_p05_at_required_capture": income_p05,
+        "target_monthly_usdc": target_monthly,
         "required_capture_rate": _float(metrics.get("required_capture_rate"), math.nan),
         "taker_rescue_feasible_rate": _float(metrics.get("taker_rescue_feasible_rate"), math.nan),
         "taker_rescue_min_depth_fraction": _float(metrics.get("taker_rescue_min_depth_fraction"), math.nan),
@@ -109,12 +137,26 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         "drawdown_max_open_inventory_fraction": _float(drawdown_metrics.get("max_open_inventory_fraction"), math.nan),
         "drawdown_max_active_order_notional": _float(drawdown_metrics.get("max_active_order_notional"), math.nan),
         "drawdown_max_active_order_fraction": _float(drawdown_metrics.get("max_active_order_fraction"), math.nan),
+        "capital_cash_reserve_fraction": _float(capital_metrics.get("cash_reserve_fraction"), math.nan),
+        "capital_active_pair_notional": _float(capital_metrics.get("active_pair_notional"), math.nan),
+        "capital_unhedged_loss_fraction": _float(capital_metrics.get("unhedged_loss_fraction_of_capital"), math.nan),
+        "capital_unhedged_loss_usdc": _float(capital_metrics.get("all_active_unhedged_one_side_loss_to_zero"), math.nan),
+        "capital_configured_cap_loss_usdc": capital_configured_cap_loss,
+        "capital_configured_cap_loss_fraction": _float(capital_metrics.get("configured_inventory_cap_loss_fraction"), math.nan),
+        "capital_configured_cap_recovery_days": _float(capital_metrics.get("capped_recovery_days_at_p05_income"), math.nan),
+        "capital_after_configured_cap_loss_monthly": capital_after_configured_cap_loss,
+        "capital_after_cap_loss_target_passed": after_cap_target_passed,
+        "capital_pair_cost_per_share": _float(capital_metrics.get("max_pair_cost_per_share"), math.nan),
         "blockers": [str(x) for x in blockers],
         "drawdown_blockers": [str(x) for x in drawdown_blockers],
+        "capital_blockers": [str(x) for x in capital_blockers],
         "metadata": metadata,
     }
     row["promotion_core_passed"] = bool(
-        row["income_gate_passed"] and row["risk_gates_passed"] and row["drawdown_core_passed"]
+        row["income_gate_passed"]
+        and row["risk_gates_passed"]
+        and row["drawdown_core_passed"]
+        and row["capital_core_passed"]
     )
     row["promotion_public_paper_passed"] = bool(
         row["has_drawdown_guard"]
@@ -135,12 +177,17 @@ def _rank_key(row: dict[str, Any]) -> tuple[float, ...]:
     drawdown_mtm = _risk_bucket(row.get("drawdown_mtm_fraction"), decimals=6, default=math.inf)
     open_inventory = _risk_bucket(row.get("drawdown_max_open_inventory_fraction"), decimals=6, default=math.inf)
     active_orders = _risk_bucket(row.get("drawdown_max_active_order_fraction"), decimals=6, default=math.inf)
+    cap_loss = _risk_bucket(row.get("capital_configured_cap_loss_fraction"), decimals=6, default=math.inf)
+    cap_recovery = _risk_bucket(row.get("capital_configured_cap_recovery_days"), decimals=4, default=math.inf)
+    unhedged_loss = _risk_bucket(row.get("capital_unhedged_loss_fraction"), decimals=6, default=math.inf)
+    cash_reserve = _finite(row.get("capital_cash_reserve_fraction"), -math.inf)
     reward_loss = _finite(row.get("drawdown_reward_to_trading_loss_ratio"), -math.inf)
     return (
         float(bool(row.get("public_paper_depth_ready"))),
         float(bool(row.get("income_gate_passed"))),
         float(bool(row.get("risk_gates_passed"))),
         float(bool(row.get("drawdown_core_passed", True))),
+        float(bool(row.get("capital_core_passed", True))),
         float(bool(row.get("sample_gates_passed"))),
         float(bool(row.get("drawdown_guard_passed", True))),
         -residual_fraction,
@@ -148,6 +195,10 @@ def _rank_key(row: dict[str, Any]) -> tuple[float, ...]:
         -drawdown_mtm,
         -open_inventory,
         -active_orders,
+        -cap_loss,
+        -cap_recovery,
+        -unhedged_loss,
+        cash_reserve,
         reward_loss,
         income,
         rescue_rate,
@@ -164,7 +215,10 @@ def _policy_leaders(rows: list[dict[str, Any]]) -> dict[str, Any]:
     eligible = [
         row
         for row in rows
-        if row.get("income_gate_passed") and row.get("risk_gates_passed") and row.get("drawdown_core_passed")
+        if row.get("income_gate_passed")
+        and row.get("risk_gates_passed")
+        and row.get("drawdown_core_passed")
+        and row.get("capital_core_passed")
     ]
     population = eligible or rows
     risk_first = max(population, key=_rank_key)
@@ -186,14 +240,19 @@ def _income_rank_key(row: dict[str, Any]) -> tuple[float, ...]:
     residual_fraction = _risk_bucket(row.get("latest_taker_residual_loss_fraction"), decimals=6, default=math.inf)
     residual_loss = _risk_bucket(row.get("latest_taker_residual_loss_to_zero"), decimals=2, default=math.inf)
     reward_loss = _finite(row.get("drawdown_reward_to_trading_loss_ratio"), -math.inf)
+    cap_loss = _risk_bucket(row.get("capital_configured_cap_loss_fraction"), decimals=6, default=math.inf)
+    cap_recovery = _risk_bucket(row.get("capital_configured_cap_recovery_days"), decimals=4, default=math.inf)
     return (
         float(bool(row.get("public_paper_depth_ready"))),
         float(bool(row.get("drawdown_core_passed", True))),
+        float(bool(row.get("capital_core_passed", True))),
         float(bool(row.get("sample_gates_passed"))),
         float(bool(row.get("drawdown_guard_passed", True))),
         income,
         -residual_fraction,
         -residual_loss,
+        -cap_loss,
+        -cap_recovery,
         reward_loss,
         float(row.get("unique_markets_quoted", 0)),
         float(row.get("quote_rows", 0)),
@@ -204,15 +263,18 @@ def _income_rank_key(row: dict[str, Any]) -> tuple[float, ...]:
 def _sample_rank_key(row: dict[str, Any]) -> tuple[float, ...]:
     income = _finite(row.get("income_p05_at_required_capture"), -math.inf)
     residual_fraction = _risk_bucket(row.get("latest_taker_residual_loss_fraction"), decimals=6, default=math.inf)
+    cap_loss = _risk_bucket(row.get("capital_configured_cap_loss_fraction"), decimals=6, default=math.inf)
     return (
         float(bool(row.get("public_paper_depth_ready"))),
         float(bool(row.get("drawdown_core_passed", True))),
+        float(bool(row.get("capital_core_passed", True))),
         float(bool(row.get("sample_gates_passed"))),
         float(bool(row.get("drawdown_sample_passed", True))),
         float(row.get("duration_hours", 0.0)),
         float(row.get("quote_rows", 0)),
         float(row.get("unique_markets_quoted", 0)),
         -residual_fraction,
+        -cap_loss,
         income,
     )
 
@@ -236,19 +298,29 @@ def _leader_summary(row: dict[str, Any]) -> dict[str, Any]:
         "drawdown_mtm_fraction": row.get("drawdown_mtm_fraction"),
         "drawdown_max_open_inventory_fraction": row.get("drawdown_max_open_inventory_fraction"),
         "drawdown_max_active_order_fraction": row.get("drawdown_max_active_order_fraction"),
+        "capital_risk_status": row.get("capital_risk_status"),
+        "capital_cash_reserve_fraction": row.get("capital_cash_reserve_fraction"),
+        "capital_unhedged_loss_fraction": row.get("capital_unhedged_loss_fraction"),
+        "capital_configured_cap_loss_usdc": row.get("capital_configured_cap_loss_usdc"),
+        "capital_configured_cap_loss_fraction": row.get("capital_configured_cap_loss_fraction"),
+        "capital_configured_cap_recovery_days": row.get("capital_configured_cap_recovery_days"),
+        "capital_after_configured_cap_loss_monthly": row.get("capital_after_configured_cap_loss_monthly"),
+        "capital_after_cap_loss_target_passed": row.get("capital_after_cap_loss_target_passed"),
         "ranking_note": row.get("ranking_note"),
     }
 
 
 def _ranking_note(row: dict[str, Any]) -> str:
+    if row.get("has_capital_risk") and not row.get("capital_core_passed"):
+        return "income/rescue may pass, but capital-loss or recovery guard blocks promotion"
     if row.get("has_drawdown_guard") and not row.get("drawdown_core_passed"):
         return "income/rescue may pass, but drawdown or reward-loss guard blocks promotion"
     if row.get("promotion_public_paper_passed"):
-        return "public-paper income/rescue/drawdown gates passed; still needs signed paper and paid-reward proof"
+        return "public-paper income/rescue/drawdown/capital gates passed; still needs signed paper and paid-reward proof"
     if row.get("public_paper_depth_ready"):
-        return "public-paper depth/income gates passed; drawdown or signed reward proof still pending"
+        return "public-paper depth/income gates passed; drawdown/capital or signed reward proof still pending"
     if row.get("promotion_core_passed"):
-        return "income/rescue/drawdown core passes; sample gate still pending"
+        return "income/rescue/drawdown/capital core passes; sample gate still pending"
     if row.get("income_gate_passed") and row.get("risk_gates_passed"):
         return "income/risk scout passes; sample gate still pending"
     if row.get("risk_gates_passed"):
@@ -270,6 +342,13 @@ def _status(leader: dict[str, Any]) -> str:
         and not leader.get("drawdown_core_passed")
     ):
         return "public_paper_leader_drawdown_core_failed"
+    if (
+        leader.get("has_capital_risk")
+        and leader.get("income_gate_passed")
+        and leader.get("risk_gates_passed")
+        and not leader.get("capital_core_passed")
+    ):
+        return "public_paper_leader_capital_core_failed"
     if leader.get("income_gate_passed") and leader.get("risk_gates_passed"):
         return "public_paper_leader_sample_pending"
     return "no_public_paper_candidate_ready"

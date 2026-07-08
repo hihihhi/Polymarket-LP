@@ -16,10 +16,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from polymarket_lp.capital_risk import (  # noqa: E402
+    CapitalRiskStressConfig,
+    config_from_lp_manifest,
+    evaluate_capital_risk_stress,
+)
 from polymarket_lp.candidate_leaderboard import CandidateEvidence, build_candidate_leaderboard  # noqa: E402
 from polymarket_lp.drawdown_guard import (  # noqa: E402
     DrawdownGuardConfig,
@@ -58,6 +65,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-open-inventory-fraction", type=float, default=0.50)
     p.add_argument("--max-active-order-fraction", type=float, default=0.70)
     p.add_argument("--min-reward-to-trading-loss-ratio", type=float, default=3.0)
+    p.add_argument("--min-cash-reserve-fraction", type=float, default=0.40)
+    p.add_argument("--max-unhedged-loss-fraction", type=float, default=0.50)
+    p.add_argument("--max-configured-cap-loss-fraction", type=float, default=0.25)
+    p.add_argument("--max-configured-cap-recovery-days", type=float, default=10.0)
+    p.add_argument("--max-unpaired-per-market", type=float, default=60.0)
+    p.add_argument("--max-total-unpaired", type=float, default=450.0)
+    p.add_argument("--max-cluster-unpaired", type=float, default=250.0)
+    p.add_argument("--exit-slippage", type=float, default=0.005)
     return p.parse_args()
 
 
@@ -72,17 +87,25 @@ def main() -> None:
         background = json.loads(Path(background_path).read_text(encoding="utf-8-sig"))
         candidate_dir = work_dir / _safe_name(name)
         try:
-            gate_path = refresh_candidate(name, background, candidate_dir, args, seed=args.bootstrap_seed + index)
-            gate = json.loads(gate_path.read_text(encoding="utf-8-sig"))
+            refreshed_paths = refresh_candidate(name, background, candidate_dir, args, seed=args.bootstrap_seed + index)
+            gate = json.loads(refreshed_paths["gate"].read_text(encoding="utf-8-sig"))
             drawdown_guard = evaluate_candidate_drawdown(name, background, args)
-            gate_path_text = str(gate_path)
+            capital_risk = evaluate_candidate_capital(name, background, refreshed_paths["target_status"], args)
+            gate_path_text = str(refreshed_paths["gate"])
         except SystemExit as exc:
             message = str(exc)
             gate = _pending_gate(message)
             drawdown_guard = _pending_drawdown(message)
+            capital_risk = _pending_capital(message)
             gate_path_text = ""
         candidates.append(
-            CandidateEvidence(name=name, gate=gate, metadata=background, drawdown_guard=drawdown_guard)
+            CandidateEvidence(
+                name=name,
+                gate=gate,
+                metadata=background,
+                drawdown_guard=drawdown_guard,
+                capital_risk=capital_risk,
+            )
         )
         refreshed.append(
             {
@@ -110,7 +133,7 @@ def refresh_candidate(
     args: argparse.Namespace,
     *,
     seed: int,
-) -> Path:
+) -> dict[str, Path]:
     snapshot = _required_path(background, "snapshot", name)
     quotes = _required_path(background, "quotes", name)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -219,7 +242,7 @@ def refresh_candidate(
         ],
         out_dir,
     )
-    return gate_json
+    return {"gate": gate_json, "target_status": target_dir / "target_status.json"}
 
 
 def evaluate_candidate_drawdown(name: str, background: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
@@ -236,6 +259,33 @@ def evaluate_candidate_drawdown(name: str, background: dict[str, Any], args: arg
         min_reward_to_trading_loss_ratio=args.min_reward_to_trading_loss_ratio,
     )
     return evaluate_drawdown_guard(load_snapshots(snapshot), lp_config_from_manifest(manifest), cfg)
+
+
+def evaluate_candidate_capital(
+    name: str,
+    background: dict[str, Any],
+    target_status: Path,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    quotes = _required_path(background, "quotes", name)
+    if not target_status.exists():
+        raise SystemExit(f"candidate {name!r} target status path does not exist: {target_status}")
+    cfg = config_from_lp_manifest(
+        background,
+        CapitalRiskStressConfig(
+            initial_capital=args.initial_capital,
+            min_cash_reserve_fraction=args.min_cash_reserve_fraction,
+            max_unhedged_loss_fraction=args.max_unhedged_loss_fraction,
+            max_capped_loss_fraction=args.max_configured_cap_loss_fraction,
+            max_capped_recovery_days=args.max_configured_cap_recovery_days,
+            max_unpaired_per_market=args.max_unpaired_per_market,
+            max_total_unpaired=args.max_total_unpaired,
+            max_cluster_unpaired=args.max_cluster_unpaired,
+            exit_slippage=args.exit_slippage,
+        ),
+    )
+    target = json.loads(target_status.read_text(encoding="utf-8-sig"))
+    return evaluate_capital_risk_stress(pd.read_csv(quotes), target_status=target, cfg=cfg)
 
 
 def _pending_gate(message: str) -> dict[str, Any]:
@@ -283,6 +333,21 @@ def _pending_drawdown(message: str) -> dict[str, Any]:
     }
 
 
+def _pending_capital(message: str) -> dict[str, Any]:
+    return {
+        "status": "capital_risk_data_pending",
+        "metrics": {
+            "cash_reserve_fraction": math.nan,
+            "unhedged_loss_fraction_of_capital": math.nan,
+            "configured_inventory_cap_loss_to_zero": math.nan,
+            "configured_inventory_cap_loss_fraction": math.nan,
+            "capped_recovery_days_at_p05_income": math.nan,
+        },
+        "gates": {"capital_risk_stress_passed": False},
+        "blockers": [message],
+    }
+
+
 def run(command: list[str], out_dir: Path) -> None:
     log = out_dir / "refresh_candidate_leaderboard.log"
     with log.open("a", encoding="utf-8") as handle:
@@ -322,8 +387,8 @@ def _markdown(result: dict[str, Any]) -> str:
         f"Status: `{result['status']}`",
         f"Leader policy: `{result.get('leader_policy', 'n/a')}`",
         "",
-        "| Rank | Candidate | Status | p05/mo @ capture | Quote | Active cap | Rescue cap | Hours | Rows | Markets | Rescue feasible | Residual loss | Max inv | Max active | DD guard | DD reward/loss | Note |",
-        "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|",
+        "| Rank | Candidate | Status | p05/mo @ capture | After cap loss | Quote | Active cap | Rescue cap | Cap loss | Cap recovery | Cash reserve | Hours | Rows | Markets | Rescue feasible | Residual loss | Max active | DD guard | Cap guard | Note |",
+        "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
     ]
     for idx, row in enumerate(result.get("candidates", []), start=1):
         lines.append(
@@ -334,18 +399,21 @@ def _markdown(result: dict[str, Any]) -> str:
                     str(row.get("name", "")),
                     str(row.get("status", "")),
                     _money(row.get("income_p05_at_required_capture")),
+                    _money(row.get("capital_after_configured_cap_loss_monthly")),
                     _shares(row.get("configured_quote_size_shares")),
                     _money(row.get("configured_active_capital_limit")),
                     _money(row.get("configured_residual_loss_cap_usdc")),
+                    _money(row.get("capital_configured_cap_loss_usdc")),
+                    _num(row.get("capital_configured_cap_recovery_days"), 2),
+                    _pct(row.get("capital_cash_reserve_fraction")),
                     _num(row.get("duration_hours"), 2),
                     str(row.get("quote_rows", 0)),
                     str(row.get("unique_markets_quoted", 0)),
                     _pct(row.get("taker_rescue_feasible_rate")),
                     _money(row.get("latest_taker_residual_loss_to_zero")),
-                    _pct(row.get("drawdown_max_open_inventory_fraction")),
                     _pct(row.get("drawdown_max_active_order_fraction")),
                     str(row.get("drawdown_guard_status", "not_evaluated")),
-                    _num(row.get("drawdown_reward_to_trading_loss_ratio"), 2),
+                    str(row.get("capital_risk_status", "not_evaluated")),
                     str(row.get("ranking_note", "")),
                 ]
             )
@@ -366,8 +434,9 @@ def _markdown(result: dict[str, Any]) -> str:
                     f"- {label}: `{item.get('name')}`; p05/mo {_money(item.get('income_p05_at_required_capture'))}; "
                     f"quote {_shares(item.get('configured_quote_size_shares'))}; active cap {_money(item.get('configured_active_capital_limit'))}; "
                     f"rescue cap {_money(item.get('configured_residual_loss_cap_usdc'))}; hours {_num(item.get('duration_hours'), 2)}; "
-                    f"residual {_money(item.get('latest_taker_residual_loss_to_zero'))}; "
-                    f"drawdown guard {item.get('drawdown_guard_status')}."
+                    f"cap loss {_money(item.get('capital_configured_cap_loss_usdc'))}; cap recovery {_num(item.get('capital_configured_cap_recovery_days'), 2)}d; "
+                    f"after-cap p05 {_money(item.get('capital_after_configured_cap_loss_monthly'))}; "
+                    f"drawdown guard {item.get('drawdown_guard_status')}; capital guard {item.get('capital_risk_status')}."
                 )
         if policy.get("note"):
             lines.append(f"- note: {policy['note']}")

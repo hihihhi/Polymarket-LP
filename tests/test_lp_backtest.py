@@ -44,7 +44,13 @@ from polymarket_lp.candidate_leaderboard import CandidateEvidence, build_candida
 from polymarket_lp.drawdown_guard import DrawdownGuardConfig, evaluate_drawdown_guard, lp_config_from_manifest
 from scripts.paper_replay import make_lp_config
 from scripts.launch_live_paper_candidate import LaunchCandidateConfig, write_launch_artifacts
-from scripts.refresh_candidate_leaderboard import _pending_drawdown, _pending_gate, _safe_name, _split_named_path
+from scripts.refresh_candidate_leaderboard import (
+    _pending_capital,
+    _pending_drawdown,
+    _pending_gate,
+    _safe_name,
+    _split_named_path,
+)
 from scripts.update_target_status import _bootstrap_target_from_quotes, _capture_stress_grid, _json_safe
 from scripts.target_config_grid import SelectionConfig, _candidate_row
 import scripts.partial_rescue_config_grid as partial_rescue_grid
@@ -1908,6 +1914,7 @@ def test_candidate_leaderboard_exposes_risk_income_and_sample_policy_leaders() -
     def gate(income: float, residual: float, hours: float, rows: int) -> dict[str, object]:
         return {
             "status": "depth_not_ready",
+            "config": {"target_monthly_usdc": 1000},
             "metrics": {
                 "duration_hours": hours,
                 "quote_rows": rows,
@@ -1950,6 +1957,7 @@ def test_candidate_leaderboard_demotes_drawdown_core_failures() -> None:
     def gate(income: float, residual: float) -> dict[str, object]:
         return {
             "status": "depth_not_ready",
+            "config": {"target_monthly_usdc": 1000},
             "metrics": {
                 "duration_hours": 1,
                 "quote_rows": 40,
@@ -1997,6 +2005,75 @@ def test_candidate_leaderboard_demotes_drawdown_core_failures() -> None:
     assert result["leader"]["name"] == "lower_income_good_dd"
     assert not result["candidates"][1]["drawdown_core_passed"]
     assert result["policy_leaders"]["risk_first_leader"]["name"] == "lower_income_good_dd"
+
+
+def test_candidate_leaderboard_demotes_capital_risk_failures() -> None:
+    def gate(income: float) -> dict[str, object]:
+        return {
+            "status": "depth_not_ready",
+            "config": {"target_monthly_usdc": 1000},
+            "metrics": {
+                "duration_hours": 1,
+                "quote_rows": 40,
+                "unique_markets_quoted": 4,
+                "income_p05_at_required_capture": income,
+                "taker_rescue_feasible_rate": 1,
+                "taker_size_weighted_rescue_fraction": 1,
+                "latest_taker_residual_loss_to_zero": 0,
+                "latest_taker_residual_loss_fraction": 0,
+            },
+            "gates": {
+                "depth_ready": False,
+                "income_p05_gate_passed": True,
+                "clob_quality_gate_passed": True,
+                "taker_rescue_rate_gate_passed": True,
+                "taker_pair_edge_gate_passed": True,
+                "taker_depth_gate_passed": True,
+                "taker_residual_loss_gate_passed": True,
+                "sample_hours_gate_passed": False,
+                "quote_rows_gate_passed": True,
+                "book_scenario_gate_passed": True,
+            },
+        }
+
+    drawdown = {
+        "status": "drawdown_guard_sample_pending",
+        "risk_core_passed": True,
+        "gates": {"sample_hours_gate_passed": False, "drawdown_guard_passed": False},
+        "metrics": {"reward_to_trading_loss_ratio": 5.0, "max_drawdown_mtm_fraction": 0.001},
+    }
+    good_capital = {
+        "status": "capital_risk_stress_passed",
+        "metrics": {
+            "cash_reserve_fraction": 0.55,
+            "unhedged_loss_fraction_of_capital": 0.30,
+            "configured_inventory_cap_loss_to_zero": 120,
+            "configured_inventory_cap_loss_fraction": 0.06,
+            "capped_recovery_days_at_p05_income": 3.0,
+        },
+        "blockers": [],
+    }
+    bad_capital = {
+        "status": "capital_risk_stress_failed",
+        "metrics": {
+            "cash_reserve_fraction": 0.10,
+            "unhedged_loss_fraction_of_capital": 0.90,
+            "configured_inventory_cap_loss_to_zero": 800,
+            "configured_inventory_cap_loss_fraction": 0.40,
+            "capped_recovery_days_at_p05_income": 18.0,
+        },
+        "blockers": ["configured inventory-cap loss exceeds 25% of capital"],
+    }
+    result = build_candidate_leaderboard(
+        [
+            CandidateEvidence("higher_income_bad_capital", gate(1900), drawdown_guard=drawdown, capital_risk=bad_capital),
+            CandidateEvidence("lower_income_good_capital", gate(1300), drawdown_guard=drawdown, capital_risk=good_capital),
+        ]
+    )
+    assert result["leader"]["name"] == "lower_income_good_capital"
+    assert not result["candidates"][1]["capital_core_passed"]
+    assert result["leader"]["capital_configured_cap_loss_usdc"] == 120
+    assert result["policy_leaders"]["risk_first_leader"]["name"] == "lower_income_good_capital"
 
 
 def test_candidate_leaderboard_exposes_and_prefers_lower_inventory_pressure() -> None:
@@ -2073,11 +2150,13 @@ def test_refresh_candidate_leaderboard_parses_named_paths_safely() -> None:
 def test_refresh_candidate_leaderboard_pending_candidate_is_non_promotable() -> None:
     gate = _pending_gate("snapshot missing")
     drawdown = _pending_drawdown("snapshot missing")
-    result = build_candidate_leaderboard([CandidateEvidence("pending", gate, drawdown_guard=drawdown)])
+    capital = _pending_capital("snapshot missing")
+    result = build_candidate_leaderboard([CandidateEvidence("pending", gate, drawdown_guard=drawdown, capital_risk=capital)])
     assert result["status"] == "no_public_paper_candidate_ready"
     assert result["leader"]["name"] == "pending"
     assert not result["leader"]["income_gate_passed"]
     assert not result["leader"]["drawdown_core_passed"]
+    assert not result["leader"]["capital_core_passed"]
 
 
 def test_partial_rescue_grid_selection_requires_drawdown_core() -> None:
