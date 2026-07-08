@@ -480,8 +480,8 @@ def _markdown(result: dict[str, Any]) -> str:
         f"Status: `{result['status']}`",
         f"Leader policy: `{result.get('leader_policy', 'n/a')}`",
         "",
-        "| Rank | Candidate | Status | p05/mo @ capture | After cap loss | Req capture | Req capture after cap | After-cap buffer | Quote | Active cap | Rescue cap | Cap loss | Cap recovery | Cash reserve | Mkt active | Cluster active | Hours | Rows | Markets | Input age | Rescue feasible | Residual loss | Max active | DD guard | Cap guard | Note |",
-        "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
+        "| Rank | Candidate | Action | Scale | Status | p05/mo @ capture | After cap loss | Req capture | Req capture after cap | After-cap buffer | Quote | Active cap | Rescue cap | Cap loss | Cap recovery | Cash reserve | Mkt active | Cluster active | Hours | Rows | Markets | Input age | Rescue feasible | Residual loss | Max active | DD guard | Cap guard | Note |",
+        "|---:|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
     ]
     for idx, row in enumerate(result.get("candidates", []), start=1):
         lines.append(
@@ -490,6 +490,8 @@ def _markdown(result: dict[str, Any]) -> str:
                 [
                     str(idx),
                     str(row.get("name", "")),
+                    str(row.get("autonomous_action", "")),
+                    _pct(row.get("recommended_quote_scale")),
                     str(row.get("status", "")),
                     _money(row.get("income_p05_at_required_capture")),
                     _money(row.get("capital_after_configured_cap_loss_monthly")),
@@ -540,6 +542,7 @@ def _markdown(result: dict[str, Any]) -> str:
                     f"single-market active {_pct(item.get('capital_single_market_active_fraction'))}; "
                     f"single-cluster active {_pct(item.get('capital_single_cluster_active_fraction'))}; "
                     f"input max age {_num(item.get('input_max_age_seconds'), 0)}s; "
+                    f"action {item.get('autonomous_action')}; scale {_pct(item.get('recommended_quote_scale'))}; "
                     f"drawdown guard {item.get('drawdown_guard_status')}; capital guard {item.get('capital_risk_status')}."
                 )
         if policy.get("note"):

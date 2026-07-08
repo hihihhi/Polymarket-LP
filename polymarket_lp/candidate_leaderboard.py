@@ -214,6 +214,8 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         and row["sample_gates_passed"]
         and row["drawdown_guard_passed"]
     )
+    recovery = _autonomous_recovery(row, capital_config)
+    row.update(recovery)
     row["ranking_note"] = _ranking_note(row)
     return row
 
@@ -399,6 +401,10 @@ def _leader_summary(row: dict[str, Any]) -> dict[str, Any]:
         ),
         "input_max_age_seconds": row.get("input_max_age_seconds"),
         "input_freshness_gate_seconds": row.get("input_freshness_gate_seconds"),
+        "autonomous_action": row.get("autonomous_action"),
+        "recommended_quote_scale": row.get("recommended_quote_scale"),
+        "recommended_quote_size_shares": row.get("recommended_quote_size_shares"),
+        "autonomous_action_reason": row.get("autonomous_action_reason"),
         "ranking_note": row.get("ranking_note"),
     }
 
@@ -445,6 +451,119 @@ def _status(leader: dict[str, Any]) -> str:
     if leader.get("income_gate_passed") and leader.get("risk_gates_passed"):
         return "public_paper_leader_sample_pending"
     return "no_public_paper_candidate_ready"
+
+
+def _autonomous_recovery(row: dict[str, Any], capital_config: dict[str, Any]) -> dict[str, Any]:
+    """Return mechanical action/scale for public-paper monitoring.
+
+    This is deliberately conservative: it never authorizes live capital. It only
+    tells an autonomous runner whether the current evidence supports continuing
+    public paper, reducing size, or entering rescue-only/pause mode.
+    """
+
+    configured_qsize = _finite(row.get("configured_quote_size_shares"), math.nan)
+    scale, scale_reason = _recommended_scale(row, capital_config)
+    recommended_qsize = math.floor(configured_qsize * scale) if math.isfinite(configured_qsize) else math.nan
+    if not math.isfinite(scale):
+        scale = 0.0
+    if row.get("quote_rows", 0) <= 0:
+        action = "collect_more_public_paper"
+        reason = "no quote evidence yet"
+    elif not row.get("risk_gates_passed"):
+        action = "pause_new_quotes_rescue_only"
+        reason = "rescue/depth/residual-loss risk gate failed"
+    elif not row.get("income_gate_passed"):
+        action = "collect_only_no_scale_up"
+        reason = "income target not proven at required capture"
+    elif scale < 0.25:
+        action = "pause_new_quotes_rescue_only"
+        reason = f"risk sizing scale too small: {scale_reason}"
+    elif scale < 0.999:
+        action = "reduce_size_continue_public_paper"
+        reason = scale_reason
+    elif row.get("promotion_public_paper_passed"):
+        action = "signed_paper_telemetry_next"
+        reason = "public-paper gates passed; live deployment still requires signed paper and paid reward proof"
+    elif row.get("promotion_core_passed"):
+        action = "continue_public_paper_current_size"
+        reason = "core income/risk/recovery gates pass; sample or telemetry gate still pending"
+    else:
+        action = "collect_more_public_paper"
+        reason = "sample is immature or non-core gates still pending"
+    return {
+        "autonomous_action": action,
+        "recommended_quote_scale": scale,
+        "recommended_quote_size_shares": recommended_qsize,
+        "autonomous_action_reason": reason,
+    }
+
+
+def _recommended_scale(row: dict[str, Any], capital_config: dict[str, Any]) -> tuple[float, str]:
+    initial_capital = _finite(capital_config.get("initial_capital"), 2_000.0)
+    limits: list[tuple[str, float]] = []
+    if initial_capital > 0:
+        active_notional = _finite(row.get("capital_active_pair_notional"), math.nan)
+        min_cash = _finite(capital_config.get("min_cash_reserve_fraction"), math.nan)
+        if math.isfinite(active_notional) and math.isfinite(min_cash) and active_notional > 0:
+            limits.append(("cash reserve", initial_capital * (1.0 - min_cash) / active_notional))
+        _append_fraction_limit(
+            limits,
+            "unhedged loss",
+            row.get("capital_unhedged_loss_fraction"),
+            capital_config.get("max_unhedged_loss_fraction"),
+        )
+        _append_fraction_limit(
+            limits,
+            "configured cap loss",
+            row.get("capital_configured_cap_loss_fraction"),
+            capital_config.get("max_capped_loss_fraction"),
+        )
+        _append_fraction_limit(
+            limits,
+            "single-market active",
+            row.get("capital_single_market_active_fraction"),
+            capital_config.get("max_single_market_active_fraction"),
+        )
+        _append_fraction_limit(
+            limits,
+            "single-cluster active",
+            row.get("capital_single_cluster_active_fraction"),
+            capital_config.get("max_single_cluster_active_fraction"),
+        )
+        _append_fraction_limit(
+            limits,
+            "single-market loss",
+            row.get("capital_single_market_loss_fraction"),
+            capital_config.get("max_single_market_unhedged_loss_fraction"),
+        )
+        _append_fraction_limit(
+            limits,
+            "single-cluster loss",
+            row.get("capital_single_cluster_loss_fraction"),
+            capital_config.get("max_single_cluster_unhedged_loss_fraction"),
+        )
+    recovery_days = _finite(row.get("capital_configured_cap_recovery_days"), math.nan)
+    max_recovery_days = _finite(capital_config.get("max_capped_recovery_days"), math.nan)
+    if math.isfinite(recovery_days) and math.isfinite(max_recovery_days) and recovery_days > 0:
+        limits.append(("recovery days", max_recovery_days / recovery_days))
+    finite_limits = [(name, value) for name, value in limits if math.isfinite(value) and value >= 0]
+    if not finite_limits:
+        return 1.0, "no finite scaling constraint"
+    name, value = min(finite_limits, key=lambda item: item[1])
+    scale = max(0.0, min(1.0, value))
+    return scale, f"binding constraint: {name}"
+
+
+def _append_fraction_limit(
+    limits: list[tuple[str, float]],
+    name: str,
+    current: Any,
+    limit: Any,
+) -> None:
+    current_value = _finite(current, math.nan)
+    limit_value = _finite(limit, math.nan)
+    if math.isfinite(current_value) and math.isfinite(limit_value) and current_value > 0:
+        limits.append((name, limit_value / current_value))
 
 
 def _dict(value: Any) -> dict[str, Any]:

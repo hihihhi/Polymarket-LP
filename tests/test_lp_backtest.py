@@ -2330,7 +2330,7 @@ def test_candidate_leaderboard_reports_capture_needed_after_cap_loss() -> None:
         },
         "blockers": [],
     }
-    result = build_candidate_leaderboard([CandidateEvidence("candidate", gate, capital_risk=capital)])
+    result = build_candidate_leaderboard([CandidateEvidence("candidate", gate, metadata={"quote_size": 275}, capital_risk=capital)])
     leader = result["leader"]
     assert leader["capture_needed_for_target"] == pytest.approx(0.3125)
     assert leader["capture_needed_after_cap_loss"] == pytest.approx(0.40625)
@@ -2379,13 +2379,67 @@ def test_candidate_leaderboard_allows_after_cap_shortfall_as_warning_when_config
         "warnings": ["configured-cap loss leaves p05 monthly income below target"],
         "blockers": [],
     }
-    result = build_candidate_leaderboard([CandidateEvidence("candidate", gate, capital_risk=capital)])
+    result = build_candidate_leaderboard([CandidateEvidence("candidate", gate, metadata={"quote_size": 275}, capital_risk=capital)])
     leader = result["leader"]
     assert not leader["capital_after_cap_loss_target_passed"]
     assert not leader["capital_after_cap_loss_target_required"]
     assert leader["capital_core_passed"]
     assert leader["capital_warnings"]
     assert "configured-cap loss leaves p05 monthly income below target" not in leader["capital_blockers"]
+    assert leader["autonomous_action"] == "continue_public_paper_current_size"
+    assert leader["recommended_quote_scale"] == pytest.approx(1.0)
+
+
+def test_candidate_leaderboard_recommends_autonomous_size_reduction() -> None:
+    gate = {
+        "status": "depth_not_ready",
+        "config": {"target_monthly_usdc": 1000},
+        "metrics": {
+            "duration_hours": 2,
+            "quote_rows": 40,
+            "unique_markets_quoted": 4,
+            "income_p05_at_required_capture": 1500,
+            "required_capture_rate": 0.5,
+            "taker_rescue_feasible_rate": 1,
+            "taker_size_weighted_rescue_fraction": 1,
+            "latest_taker_residual_loss_to_zero": 0,
+            "latest_taker_residual_loss_fraction": 0,
+        },
+        "gates": {
+            "depth_ready": False,
+            "income_p05_gate_passed": True,
+            "clob_quality_gate_passed": True,
+            "taker_rescue_rate_gate_passed": True,
+            "taker_pair_edge_gate_passed": True,
+            "taker_depth_gate_passed": True,
+            "taker_residual_loss_gate_passed": True,
+            "sample_hours_gate_passed": False,
+            "quote_rows_gate_passed": True,
+            "book_scenario_gate_passed": True,
+        },
+    }
+    capital = {
+        "status": "capital_risk_stress_failed",
+        "config": {
+            "initial_capital": 2000,
+            "max_capped_loss_fraction": 0.10,
+            "max_capped_recovery_days": 10,
+        },
+        "metrics": {
+            "active_pair_notional": 400,
+            "configured_inventory_cap_loss_to_zero": 400,
+            "configured_inventory_cap_loss_fraction": 0.20,
+            "capped_recovery_days_at_p05_income": 8,
+            "cash_reserve_fraction": 0.80,
+        },
+        "blockers": ["configured inventory-cap loss exceeds 10% of capital"],
+    }
+    result = build_candidate_leaderboard([CandidateEvidence("candidate", gate, metadata={"quote_size": 275}, capital_risk=capital)])
+    leader = result["leader"]
+    assert leader["autonomous_action"] == "reduce_size_continue_public_paper"
+    assert leader["recommended_quote_scale"] == pytest.approx(0.5)
+    assert leader["recommended_quote_size_shares"] == pytest.approx(137)
+    assert "configured cap loss" in leader["autonomous_action_reason"]
 
 
 def test_candidate_leaderboard_does_not_promote_under_minimum_rows_over_mature_sample() -> None:
