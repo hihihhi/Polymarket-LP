@@ -4,6 +4,7 @@ import argparse
 import json
 
 import pandas as pd
+import pytest
 
 from polymarket_lp.lp_backtest import (
     LPConfig,
@@ -526,6 +527,27 @@ def test_run_live_paper_loop_writes_manifest_without_orders(tmp_path) -> None:
     assert "paper only" in manifest["safety"]
     assert (tmp_path / "snapshots.csv").exists()
     assert (tmp_path / "quotes.csv").exists()
+
+
+def test_run_live_paper_loop_refuses_existing_output_lock(tmp_path) -> None:
+    lock = tmp_path / "manifest.json.lock"
+    lock.write_text("already running", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="live-paper output lock exists"):
+        run_live_paper_loop(
+            snapshot_path=tmp_path / "snapshots.csv",
+            quotes_path=tmp_path / "quotes.csv",
+            manifest_path=tmp_path / "manifest.json",
+            lp_config=LPConfig(quote_size_shares=25, quote_offset=0.02, active_capital_limit=100),
+            snapshot_config=LiveSnapshotConfig(max_events=1),
+            iterations=1,
+            interval_seconds=0,
+            get_json=lambda *_: [],
+        )
+
+    assert lock.read_text(encoding="utf-8") == "already running"
+    assert not (tmp_path / "snapshots.csv").exists()
+    assert not (tmp_path / "quotes.csv").exists()
 
 
 def test_analyze_paper_quotes_uses_next_snapshot_fill_proxy() -> None:

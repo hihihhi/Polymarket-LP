@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -525,31 +527,32 @@ def run_live_paper_loop(
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
     manifest: dict[str, Any] = {}
-    for i in range(iterations):
-        batch = collect_live_reward_snapshots(snapshot_config, get_json=get_json)
-        _append_csv(snapshot_path, batch)
-        all_snapshots = load_snapshots(snapshot_path) if snapshot_path.exists() and snapshot_path.stat().st_size else batch
-        quotes = build_paper_quotes(all_snapshots, lp_config)
-        quotes.to_csv(quotes_path, index=False)
-        manifest = {
-            "iterations_completed": i + 1,
-            "last_batch_snapshots": int(len(batch)),
-            "total_snapshots": int(len(all_snapshots)),
-            "paper_quote_rows": int(len(quotes)),
-            "unique_markets_quoted": int(quotes["condition_id"].nunique()) if not quotes.empty else 0,
-            "active_pair_notional_latest_snapshot": _latest_active_pair_notional(quotes),
-            "lp_config": asdict(lp_config),
-            "snapshot_config": asdict(snapshot_config or LiveSnapshotConfig()),
-            "safety": "paper only; no private keys, order signing, order submission, or cancellation",
-            "outputs": {
-                "snapshots": str(snapshot_path),
-                "quotes": str(quotes_path),
-                "manifest": str(manifest_path),
-            },
-        }
-        manifest_path.write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
-        if i + 1 < iterations and interval_seconds > 0:
-            time.sleep(interval_seconds)
+    with _exclusive_output_lock(manifest_path.with_name(f"{manifest_path.name}.lock")):
+        for i in range(iterations):
+            batch = collect_live_reward_snapshots(snapshot_config, get_json=get_json)
+            _append_csv(snapshot_path, batch)
+            all_snapshots = load_snapshots(snapshot_path) if snapshot_path.exists() and snapshot_path.stat().st_size else batch
+            quotes = build_paper_quotes(all_snapshots, lp_config)
+            _atomic_to_csv(quotes, quotes_path)
+            manifest = {
+                "iterations_completed": i + 1,
+                "last_batch_snapshots": int(len(batch)),
+                "total_snapshots": int(len(all_snapshots)),
+                "paper_quote_rows": int(len(quotes)),
+                "unique_markets_quoted": int(quotes["condition_id"].nunique()) if not quotes.empty else 0,
+                "active_pair_notional_latest_snapshot": _latest_active_pair_notional(quotes),
+                "lp_config": asdict(lp_config),
+                "snapshot_config": asdict(snapshot_config or LiveSnapshotConfig()),
+                "safety": "paper only; no private keys, order signing, order submission, or cancellation",
+                "outputs": {
+                    "snapshots": str(snapshot_path),
+                    "quotes": str(quotes_path),
+                    "manifest": str(manifest_path),
+                },
+            }
+            _atomic_write_text(manifest_path, json.dumps(manifest, indent=2, default=str))
+            if i + 1 < iterations and interval_seconds > 0:
+                time.sleep(interval_seconds)
     return manifest
 
 
@@ -694,6 +697,59 @@ def _append_csv(path: Path, frame: pd.DataFrame) -> None:
     if frame.empty:
         return
     frame.to_csv(path, mode="a", header=not path.exists() or path.stat().st_size == 0, index=False)
+
+
+@contextmanager
+def _exclusive_output_lock(lock_path: Path) -> Iterator[None]:
+    """Prevent two live-paper loops from writing the same evidence files."""
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise RuntimeError(f"live-paper output lock exists: {lock_path}") from exc
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps(
+                    {
+                        "pid": os.getpid(),
+                        "created_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+                        "safety": "single-writer guard for public-paper evidence files",
+                    },
+                    indent=2,
+                )
+            )
+        yield
+    finally:
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _atomic_to_csv(frame: pd.DataFrame, path: Path) -> None:
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        frame.to_csv(tmp, index=False)
+        tmp.replace(path)
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(text + "\n", encoding="utf-8")
+        tmp.replace(path)
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _latest_active_pair_notional(quotes: pd.DataFrame) -> float:
