@@ -15,6 +15,7 @@ from polymarket_lp.lp_backtest import (
     make_synthetic_snapshots,
     partial_rescue_residual_capped_quote_size,
     quote_for_row,
+    quote_one_sided_loss_to_zero,
     rescue_quote_for_inventory,
     simulate_lp,
 )
@@ -240,6 +241,44 @@ def test_quote_size_respects_per_market_inventory_budget_before_reward_scoring()
     assert q["eligible"]
     assert float(q["quote_size"]) == pytest.approx(25.0 / float(q["yes_bid"]))
     assert float(q["quote_size"]) * max(float(q["yes_bid"]), float(q["no_bid"])) <= 25.0 + 1e-9
+
+
+def test_paper_quote_selection_respects_total_one_sided_risk_cap() -> None:
+    snapshots = pd.DataFrame(
+        [
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": f"m{i}",
+                "category": "economics",
+                "cluster": "economics",
+                "yes_mid": 0.52,
+                "no_mid": 0.48,
+                "reward_daily": 100.0 - i,
+                "max_incentive_spread": 0.05,
+                "min_incentive_size": 10.0,
+                "market_competitiveness": 0.1,
+            }
+            for i in range(3)
+        ]
+    )
+    cfg = LPConfig(
+        quote_size_shares=100,
+        quote_offset=0.02,
+        active_capital_limit=2000,
+        max_unpaired_per_market=1000,
+        max_total_unpaired=100,
+        max_cluster_unpaired=1000,
+    )
+    quotes = build_paper_quotes(snapshots, cfg)
+    assert quotes["condition_id"].nunique() == 2
+    worst_risk = (
+        quotes.drop_duplicates("condition_id")
+        .assign(one_sided=lambda df: df.apply(lambda row: max(row["bid_price"], 0) * row["size_shares"], axis=1))
+        ["one_sided"]
+        .sum()
+    )
+    assert worst_risk <= cfg.max_total_unpaired + 1e-9
+    assert quote_one_sided_loss_to_zero(quote_for_row(snapshots.iloc[0], cfg)) == pytest.approx(50.0)
 
 
 def test_handle_fill_pairs_opposite_inventory() -> None:
@@ -2444,7 +2483,18 @@ def test_partial_rescue_grid_selection_requires_drawdown_core() -> None:
         partial_rescue_grid._selection_status(
             {"depth_ready": False, "risk_income_gate_passed": True, "drawdown_core_passed": True}
         )
-        == "selected_risk_income_drawdown_passed_sample_not_ready"
+        == "selected_risk_income_drawdown_capital_passed_sample_not_ready"
+    )
+    assert (
+        partial_rescue_grid._selection_status(
+            {
+                "depth_ready": False,
+                "risk_income_gate_passed": True,
+                "drawdown_core_passed": True,
+                "capital_risk_stress_passed": False,
+            }
+        )
+        == "selected_risk_income_drawdown_passed_capital_failed"
     )
     assert (
         partial_rescue_grid._selection_status(

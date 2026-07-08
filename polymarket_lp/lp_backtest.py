@@ -266,6 +266,35 @@ def inventory_capped_quote_size(
     return capped if capped >= cfg.min_depth_capped_quote_size_shares else 0.0
 
 
+def quote_one_sided_loss_to_zero(quote: dict[str, float | bool]) -> float:
+    """Worst one-sided loss if exactly one quoted side fills and resolves to zero."""
+
+    try:
+        return max(float(quote["yes_bid"]), float(quote["no_bid"])) * float(quote["quote_size"])
+    except (KeyError, TypeError, ValueError):
+        return 0.0
+
+
+def quote_risk_caps_allow(
+    cfg: LPConfig,
+    quote: dict[str, float | bool],
+    *,
+    market_risk: float = 0.0,
+    total_risk: float = 0.0,
+    cluster_risk: float = 0.0,
+) -> bool:
+    """Return whether adding a quote keeps simultaneous one-sided-fill risk inside caps."""
+
+    risk = quote_one_sided_loss_to_zero(quote)
+    if risk <= 0:
+        return False
+    return (
+        market_risk + risk <= cfg.max_unpaired_per_market + 1e-9
+        and total_risk + risk <= cfg.max_total_unpaired + 1e-9
+        and cluster_risk + risk <= cfg.max_cluster_unpaired + 1e-9
+    )
+
+
 def quote_for_row(row: pd.Series, cfg: LPConfig, *, quote_offset: float | None = None, quote_size: float | None = None) -> dict[str, float | bool]:
     offset = cfg.quote_offset if quote_offset is None else float(quote_offset)
     size = depth_capped_quote_size(row, cfg, base_size=quote_size)
@@ -491,12 +520,33 @@ def simulate_lp(snapshots: pd.DataFrame, cfg: LPConfig) -> tuple[pd.DataFrame, p
             sort_key = float(q["reward_density_per_day"] if cfg.rank_by_reward_density else q["expected_reward_per_day"])
             candidates.append((sort_key, row, q))
         candidates.sort(key=lambda item: item[0], reverse=True)
+        pending_total_risk = inv_notional(inv)
+        pending_market_risk: dict[str, float] = {}
+        pending_cluster_risk: dict[str, float] = {}
+        for lot in inv:
+            pending_market_risk[lot.condition_id] = pending_market_risk.get(lot.condition_id, 0.0) + lot.notional
+            pending_cluster_risk[lot.cluster] = pending_cluster_risk.get(lot.cluster, 0.0) + lot.notional
         for _, row, q in candidates:
             order_notional = float(q["active_order_notional"])
             if active + order_notional > cfg.active_capital_limit:
                 skipped += 1
                 continue
+            condition_id = str(row["condition_id"])
+            cluster = str(row.get("cluster", "unknown"))
+            one_sided_risk = quote_one_sided_loss_to_zero(q)
+            if not quote_risk_caps_allow(
+                cfg,
+                q,
+                market_risk=pending_market_risk.get(condition_id, 0.0),
+                total_risk=pending_total_risk,
+                cluster_risk=pending_cluster_risk.get(cluster, 0.0),
+            ):
+                skipped += 1
+                continue
             active += order_notional
+            pending_total_risk += one_sided_risk
+            pending_market_risk[condition_id] = pending_market_risk.get(condition_id, 0.0) + one_sided_risk
+            pending_cluster_risk[cluster] = pending_cluster_risk.get(cluster, 0.0) + one_sided_risk
             eligible += 1
             rw = float(row["reward_daily"]) * (float(row["dt_seconds"]) / 86400) * float(q["reward_share"])
             reward += rw

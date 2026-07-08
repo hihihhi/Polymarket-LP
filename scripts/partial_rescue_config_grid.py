@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from polymarket_lp.depth_gate import DepthReadinessConfig, evaluate_depth_readiness  # noqa: E402
+from polymarket_lp.capital_risk import CapitalRiskStressConfig, evaluate_capital_risk_stress  # noqa: E402
 from polymarket_lp.drawdown_guard import DrawdownGuardConfig, evaluate_drawdown_guard  # noqa: E402
 from polymarket_lp.lp_backtest import LPConfig, load_snapshots  # noqa: E402
 from polymarket_lp.paper import PaperAnalysisConfig, analyze_paper_quotes, build_paper_quotes  # noqa: E402
@@ -48,6 +49,7 @@ class GridSelectorConfig:
     min_taker_rescue_feasible_rate: float = 0.80
     min_taker_rescue_depth_fraction: float = 1.0
     max_latest_taker_residual_loss_fraction: float = 0.05
+    max_capture_needed_after_cap_loss: float = 0.40
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,6 +64,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--safety-margin", type=float, default=0.015)
     p.add_argument("--initial-capital", type=float, default=2000.0)
     p.add_argument("--active-capital-limit", type=float, default=1200.0)
+    p.add_argument("--max-unpaired-per-market-grid", default=str(LPConfig().max_unpaired_per_market))
+    p.add_argument("--max-total-unpaired-grid", default=str(LPConfig().max_total_unpaired))
+    p.add_argument("--max-cluster-unpaired-grid", default=str(LPConfig().max_cluster_unpaired))
+    p.add_argument("--max-unpaired-minutes-grid", default=str(LPConfig().max_unpaired_minutes))
     p.add_argument("--excluded-categories", default="sports,crypto")
     p.add_argument("--max-recent-vol", type=float, default=0.006)
     p.add_argument("--max-recent-jump", type=float, default=0.025)
@@ -91,6 +97,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-open-inventory-fraction", type=float, default=0.50)
     p.add_argument("--max-active-order-fraction", type=float, default=0.70)
     p.add_argument("--min-reward-to-trading-loss-ratio", type=float, default=3.0)
+    p.add_argument("--min-cash-reserve-fraction", type=float, default=0.20)
+    p.add_argument("--max-unhedged-loss-fraction", type=float, default=0.80)
+    p.add_argument("--max-capped-loss-fraction", type=float, default=0.25)
+    p.add_argument("--max-capped-recovery-days", type=float, default=10.0)
+    p.add_argument("--max-capture-needed-after-cap-loss", type=float, default=0.40)
+    p.add_argument("--min-latest-markets", type=int, default=2)
+    p.add_argument("--max-single-market-active-fraction", type=float, default=0.35)
+    p.add_argument("--max-single-cluster-active-fraction", type=float, default=0.70)
+    p.add_argument("--max-single-market-unhedged-loss-fraction", type=float, default=0.20)
+    p.add_argument("--max-single-cluster-unhedged-loss-fraction", type=float, default=0.50)
     return p.parse_args()
 
 
@@ -113,21 +129,30 @@ def main() -> None:
         min_taker_rescue_feasible_rate=args.min_taker_rescue_feasible_rate,
         min_taker_rescue_depth_fraction=args.min_taker_rescue_depth_fraction,
         max_latest_taker_residual_loss_fraction=args.max_latest_taker_residual_loss_fraction,
+        max_capture_needed_after_cap_loss=args.max_capture_needed_after_cap_loss,
     )
 
     candidates: list[dict[str, Any]] = []
-    quote_by_key: dict[tuple[float, float, float, float], pd.DataFrame] = {}
-    for quote_size, residual_cap, offset, density in product(
+    quote_by_key: dict[tuple[float, float, float, float, float, float, float, float], pd.DataFrame] = {}
+    for quote_size, residual_cap, offset, density, max_unpaired_market, max_total_unpaired, max_cluster_unpaired, max_unpaired_minutes in product(
         _float_grid(args.quote_size_grid),
         _float_grid(args.residual_loss_grid),
         _float_grid(args.offset_grid),
         _float_grid(args.density_grid),
+        _float_grid(args.max_unpaired_per_market_grid),
+        _float_grid(args.max_total_unpaired_grid),
+        _float_grid(args.max_cluster_unpaired_grid),
+        _float_grid(args.max_unpaired_minutes_grid),
     ):
         cfg = LPConfig(
             quote_size_shares=quote_size,
             quote_offset=offset,
             safety_margin=args.safety_margin,
             active_capital_limit=args.active_capital_limit,
+            max_unpaired_per_market=max_unpaired_market,
+            max_total_unpaired=max_total_unpaired,
+            max_cluster_unpaired=max_cluster_unpaired,
+            max_unpaired_minutes=max_unpaired_minutes,
             excluded_categories=args.excluded_categories,
             min_reward_density_per_day=density,
             max_recent_vol=args.max_recent_vol,
@@ -166,6 +191,29 @@ def main() -> None:
                 min_reward_to_trading_loss_ratio=args.min_reward_to_trading_loss_ratio,
             ),
         )
+        capital = evaluate_capital_risk_stress(
+            quotes,
+            target_status=target_status,
+            cfg=CapitalRiskStressConfig(
+                initial_capital=args.initial_capital,
+                min_cash_reserve_fraction=args.min_cash_reserve_fraction,
+                max_unhedged_loss_fraction=args.max_unhedged_loss_fraction,
+                max_capped_loss_fraction=args.max_capped_loss_fraction,
+                max_capped_recovery_days=args.max_capped_recovery_days,
+                max_unpaired_per_market=max_unpaired_market,
+                max_total_unpaired=max_total_unpaired,
+                max_cluster_unpaired=max_cluster_unpaired,
+                min_latest_markets=args.min_latest_markets,
+                max_single_market_active_fraction=args.max_single_market_active_fraction,
+                max_single_cluster_active_fraction=args.max_single_cluster_active_fraction,
+                max_single_market_unhedged_loss_fraction=args.max_single_market_unhedged_loss_fraction,
+                max_single_cluster_unhedged_loss_fraction=args.max_single_cluster_unhedged_loss_fraction,
+                target_monthly_usdc=args.target_monthly,
+                reference_capture_rate=args.capture_rate,
+                max_capture_needed_after_cap_loss=args.max_capture_needed_after_cap_loss,
+                days_per_month=args.days_per_month,
+            ),
+        )
         depth = evaluate_depth_readiness(
             target_status=target_status,
             rescue_stress=rescue,
@@ -188,13 +236,29 @@ def main() -> None:
             residual_cap=residual_cap,
             offset=offset,
             density=density,
+            max_unpaired_market=max_unpaired_market,
+            max_total_unpaired=max_total_unpaired,
+            max_cluster_unpaired=max_cluster_unpaired,
+            max_unpaired_minutes=max_unpaired_minutes,
             target_status=target_status,
             rescue=rescue,
             depth=depth,
             drawdown=drawdown,
+            capital=capital,
         )
         candidates.append(row)
-        quote_by_key[(quote_size, residual_cap, offset, density)] = quotes
+        quote_by_key[
+            (
+                quote_size,
+                residual_cap,
+                offset,
+                density,
+                max_unpaired_market,
+                max_total_unpaired,
+                max_cluster_unpaired,
+                max_unpaired_minutes,
+            )
+        ] = quotes
 
     frame = pd.DataFrame(candidates)
     if not frame.empty:
@@ -203,14 +267,17 @@ def main() -> None:
                 "depth_ready",
                 "risk_income_gate_passed",
                 "drawdown_core_passed",
+                "capital_risk_stress_passed",
                 "strict_topbook_rescue_passed",
                 "latest_taker_residual_loss_fraction",
+                "capital_configured_cap_loss_fraction",
+                "capital_capture_needed_after_cap_loss",
                 "partial_rescue_max_residual_loss_usdc",
                 "income_p05_at_required_capture",
                 "drawdown_reward_to_trading_loss_ratio",
                 "avg_active_pair_notional",
             ],
-            ascending=[False, False, False, False, True, True, False, False, True],
+            ascending=[False, False, False, False, False, True, True, True, True, False, False, True],
         )
     frame.to_csv(out / "partial_rescue_config_grid.csv", index=False)
     selected = frame.iloc[0].to_dict() if len(frame) else {}
@@ -222,6 +289,10 @@ def main() -> None:
             "residual_loss_grid": _float_grid(args.residual_loss_grid),
             "offset_grid": _float_grid(args.offset_grid),
             "density_grid": _float_grid(args.density_grid),
+            "max_unpaired_per_market_grid": _float_grid(args.max_unpaired_per_market_grid),
+            "max_total_unpaired_grid": _float_grid(args.max_total_unpaired_grid),
+            "max_cluster_unpaired_grid": _float_grid(args.max_cluster_unpaired_grid),
+            "max_unpaired_minutes_grid": _float_grid(args.max_unpaired_minutes_grid),
             "active_capital_limit": args.active_capital_limit,
             "excluded_categories": args.excluded_categories,
             "max_recent_vol": args.max_recent_vol,
@@ -238,6 +309,10 @@ def main() -> None:
             float(selected["partial_rescue_max_residual_loss_usdc"]),
             float(selected["quote_offset"]),
             float(selected["min_reward_density_per_day"]),
+            float(selected["max_unpaired_per_market"]),
+            float(selected["max_total_unpaired"]),
+            float(selected["max_cluster_unpaired"]),
+            float(selected["max_unpaired_minutes"]),
         )
         selected_quotes = Path(args.selected_quotes) if args.selected_quotes else out / "selected_quotes.csv"
         selected_quotes.parent.mkdir(parents=True, exist_ok=True)
@@ -301,10 +376,15 @@ def _candidate_row(
     residual_cap: float,
     offset: float,
     density: float,
+    max_unpaired_market: float,
+    max_total_unpaired: float,
+    max_cluster_unpaired: float,
+    max_unpaired_minutes: float,
     target_status: dict[str, Any],
     rescue: dict[str, Any],
     depth: dict[str, Any],
     drawdown: dict[str, Any] | None = None,
+    capital: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     paper = _dict(target_status.get("paper_summary"))
     bootstrap = _dict(target_status.get("bootstrap_target"))
@@ -313,6 +393,9 @@ def _candidate_row(
     rescue_metrics = _dict(rescue.get("metrics"))
     drawdown = _dict(drawdown)
     drawdown_metrics = _dict(drawdown.get("metrics"))
+    capital = _dict(capital)
+    capital_metrics = _dict(capital.get("metrics"))
+    capital_gates = _dict(capital.get("gates"))
     risk_income_gate = bool(
         depth_gates.get("income_p05_gate_passed")
         and depth_gates.get("diversification_gate_passed")
@@ -321,6 +404,10 @@ def _candidate_row(
         and depth_gates.get("taker_depth_gate_passed")
         and depth_gates.get("taker_residual_loss_gate_passed")
     )
+    capital_passed = bool(capital_gates.get("capital_risk_stress_passed", True))
+    drawdown_core_passed = bool(drawdown.get("risk_core_passed", True))
+    research_core_passed = bool(risk_income_gate and drawdown_core_passed and capital_passed)
+    promotion_ready = bool(depth_gates.get("depth_ready") and drawdown_core_passed and capital_passed)
     strict_topbook_rescue = bool(
         _float(depth_metrics.get("taker_rescue_feasible_rate"), 0.0) >= 1.0
         and _float(depth_metrics.get("taker_rescue_min_depth_fraction"), 0.0) >= 1.0
@@ -331,6 +418,10 @@ def _candidate_row(
         "partial_rescue_max_residual_loss_usdc": residual_cap,
         "quote_offset": offset,
         "min_reward_density_per_day": density,
+        "max_unpaired_per_market": max_unpaired_market,
+        "max_total_unpaired": max_total_unpaired,
+        "max_cluster_unpaired": max_cluster_unpaired,
+        "max_unpaired_minutes": max_unpaired_minutes,
         "quote_rows": int(_float(paper.get("quote_rows"), 0.0)),
         "quote_pair_intervals": int(_float(paper.get("quote_pair_intervals"), 0.0)),
         "unique_markets_quoted": int(_float(paper.get("unique_markets_quoted"), 0.0)),
@@ -356,21 +447,43 @@ def _candidate_row(
         "drawdown_realized_fraction": _float(drawdown_metrics.get("max_drawdown_realized_fraction")),
         "drawdown_reward_to_trading_loss_ratio": _float(drawdown_metrics.get("reward_to_trading_loss_ratio")),
         "drawdown_max_active_order_fraction": _float(drawdown_metrics.get("max_active_order_fraction")),
+        "capital_status": capital.get("status", "not_evaluated"),
+        "capital_risk_stress_passed": capital_passed,
+        "capital_cash_reserve_fraction": _float(capital_metrics.get("cash_reserve_fraction")),
+        "capital_unhedged_loss_fraction": _float(capital_metrics.get("unhedged_loss_fraction_of_capital")),
+        "capital_configured_cap_loss_usdc": _float(capital_metrics.get("configured_inventory_cap_loss_to_zero")),
+        "capital_configured_cap_loss_fraction": _float(capital_metrics.get("configured_inventory_cap_loss_fraction")),
+        "capital_configured_cap_recovery_days": _float(capital_metrics.get("capped_recovery_days_at_p05_income")),
+        "capital_capture_needed_after_cap_loss": _float(capital_metrics.get("capture_needed_after_cap_loss")),
+        "capital_after_cap_loss_monthly": _float(capital_metrics.get("reference_capture_p05_monthly_after_cap_loss")),
         "risk_income_gate_passed": risk_income_gate,
+        "research_core_passed": research_core_passed,
         "depth_ready": bool(depth_gates.get("depth_ready")),
+        "promotion_ready": promotion_ready,
         "depth_status": depth.get("status"),
-        "blockers": "; ".join(str(x) for x in depth.get("blockers", [])),
+        "blockers": "; ".join(
+            str(x)
+            for x in [
+                *(depth.get("blockers", []) or []),
+                *(drawdown.get("blockers", []) or []),
+                *(capital.get("blockers", []) or []),
+            ]
+        ),
     }
 
 
 def _selection_status(selected: dict[str, Any]) -> str:
     if not selected:
         return "no_candidates"
-    if bool(selected.get("depth_ready")):
+    capital_passed = bool(selected.get("capital_risk_stress_passed", True))
+    drawdown_passed = bool(selected.get("drawdown_core_passed", True))
+    if bool(selected.get("depth_ready")) and drawdown_passed and capital_passed:
         return "selected_depth_ready"
-    if bool(selected.get("risk_income_gate_passed")) and bool(selected.get("drawdown_core_passed")):
-        return "selected_risk_income_drawdown_passed_sample_not_ready"
-    if bool(selected.get("risk_income_gate_passed")):
+    if bool(selected.get("risk_income_gate_passed")) and drawdown_passed and capital_passed:
+        return "selected_risk_income_drawdown_capital_passed_sample_not_ready"
+    if bool(selected.get("risk_income_gate_passed")) and drawdown_passed and not capital_passed:
+        return "selected_risk_income_drawdown_passed_capital_failed"
+    if bool(selected.get("risk_income_gate_passed")) and not drawdown_passed:
         return "selected_risk_income_passed_drawdown_failed"
     return "selected_best_failed"
 

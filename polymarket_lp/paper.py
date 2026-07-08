@@ -12,7 +12,14 @@ from urllib.request import Request, urlopen
 
 import pandas as pd
 
-from .lp_backtest import LPConfig, filter_snapshots_for_strategy, load_snapshots, quote_for_row
+from .lp_backtest import (
+    LPConfig,
+    filter_snapshots_for_strategy,
+    load_snapshots,
+    quote_for_row,
+    quote_one_sided_loss_to_zero,
+    quote_risk_caps_allow,
+)
 
 
 JsonGetter = Callable[[str, dict[str, Any] | None, float], Any]
@@ -170,11 +177,28 @@ def build_paper_quotes(snapshots: pd.DataFrame, cfg: LPConfig) -> pd.DataFrame:
         candidates.sort(key=lambda item: item[0], reverse=True)
 
         active_notional = 0.0
+        active_one_sided_risk = 0.0
+        active_market_risk: dict[str, float] = {}
+        active_cluster_risk: dict[str, float] = {}
         for _, row, quote in candidates:
             notional = float(quote["active_order_notional"])
             if active_notional + notional > cfg.active_capital_limit:
                 continue
+            condition_id = str(row["condition_id"])
+            cluster = str(row.get("cluster", "unknown"))
+            one_sided_risk = quote_one_sided_loss_to_zero(quote)
+            if not quote_risk_caps_allow(
+                cfg,
+                quote,
+                market_risk=active_market_risk.get(condition_id, 0.0),
+                total_risk=active_one_sided_risk,
+                cluster_risk=active_cluster_risk.get(cluster, 0.0),
+            ):
+                continue
             active_notional += notional
+            active_one_sided_risk += one_sided_risk
+            active_market_risk[condition_id] = active_market_risk.get(condition_id, 0.0) + one_sided_risk
+            active_cluster_risk[cluster] = active_cluster_risk.get(cluster, 0.0) + one_sided_risk
             for side, bid_col in [("YES", "yes_bid"), ("NO", "no_bid")]:
                 out_rows.append(
                     {
