@@ -1945,6 +1945,59 @@ def test_candidate_leaderboard_exposes_risk_income_and_sample_policy_leaders() -
     assert leaders["sample_first_leader"]["name"] == "mature"
 
 
+def test_candidate_leaderboard_demotes_drawdown_core_failures() -> None:
+    def gate(income: float, residual: float) -> dict[str, object]:
+        return {
+            "status": "depth_not_ready",
+            "metrics": {
+                "duration_hours": 1,
+                "quote_rows": 40,
+                "unique_markets_quoted": 4,
+                "income_p05_at_required_capture": income,
+                "taker_rescue_feasible_rate": 0.95,
+                "taker_size_weighted_rescue_fraction": 0.99,
+                "latest_taker_residual_loss_to_zero": residual,
+                "latest_taker_residual_loss_fraction": residual / 2000,
+            },
+            "gates": {
+                "depth_ready": False,
+                "income_p05_gate_passed": True,
+                "clob_quality_gate_passed": True,
+                "taker_rescue_rate_gate_passed": True,
+                "taker_pair_edge_gate_passed": True,
+                "taker_depth_gate_passed": True,
+                "taker_residual_loss_gate_passed": True,
+                "sample_hours_gate_passed": False,
+                "quote_rows_gate_passed": True,
+                "book_scenario_gate_passed": True,
+            },
+        }
+
+    good_drawdown = {
+        "status": "drawdown_guard_sample_pending",
+        "risk_core_passed": True,
+        "gates": {"sample_hours_gate_passed": False, "drawdown_guard_passed": False},
+        "metrics": {"reward_to_trading_loss_ratio": 3.2, "max_drawdown_mtm_fraction": 0.001},
+        "blockers": ["needs sample"],
+    }
+    bad_drawdown = {
+        "status": "drawdown_guard_failed",
+        "risk_core_passed": False,
+        "gates": {"sample_hours_gate_passed": False, "drawdown_guard_passed": False},
+        "metrics": {"reward_to_trading_loss_ratio": 2.0, "max_drawdown_mtm_fraction": 0.001},
+        "blockers": ["reward/trading-loss ratio below 3.00"],
+    }
+    result = build_candidate_leaderboard(
+        [
+            CandidateEvidence("higher_income_bad_dd", gate(1800, 0), drawdown_guard=bad_drawdown),
+            CandidateEvidence("lower_income_good_dd", gate(1200, 5), drawdown_guard=good_drawdown),
+        ]
+    )
+    assert result["leader"]["name"] == "lower_income_good_dd"
+    assert not result["candidates"][1]["drawdown_core_passed"]
+    assert result["policy_leaders"]["risk_first_leader"]["name"] == "lower_income_good_dd"
+
+
 def test_refresh_candidate_leaderboard_parses_named_paths_safely() -> None:
     assert _split_named_path("q300=C:/tmp/bg.json", "--candidate") == ("q300", "C:/tmp/bg.json")
     assert _safe_name("q300/cap10 d0.06") == "q300_cap10_d0.06"

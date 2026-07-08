@@ -21,6 +21,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from polymarket_lp.candidate_leaderboard import CandidateEvidence, build_candidate_leaderboard  # noqa: E402
+from polymarket_lp.drawdown_guard import (  # noqa: E402
+    DrawdownGuardConfig,
+    evaluate_drawdown_guard,
+    lp_config_from_manifest,
+)
+from polymarket_lp.lp_backtest import load_snapshots  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +53,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-taker-rescue-depth-fraction", type=float, default=1.0)
     p.add_argument("--min-taker-rescue-pair-edge-per-share", type=float, default=0.0)
     p.add_argument("--max-latest-taker-residual-loss-fraction", type=float, default=0.05)
+    p.add_argument("--max-mtm-drawdown-fraction", type=float, default=0.10)
+    p.add_argument("--max-realized-drawdown-fraction", type=float, default=0.05)
+    p.add_argument("--max-open-inventory-fraction", type=float, default=0.50)
+    p.add_argument("--max-active-order-fraction", type=float, default=0.70)
+    p.add_argument("--min-reward-to-trading-loss-ratio", type=float, default=3.0)
     return p.parse_args()
 
 
@@ -62,7 +73,10 @@ def main() -> None:
         candidate_dir = work_dir / _safe_name(name)
         gate_path = refresh_candidate(name, background, candidate_dir, args, seed=args.bootstrap_seed + index)
         gate = json.loads(gate_path.read_text(encoding="utf-8-sig"))
-        candidates.append(CandidateEvidence(name=name, gate=gate, metadata=background))
+        drawdown_guard = evaluate_candidate_drawdown(name, background, args)
+        candidates.append(
+            CandidateEvidence(name=name, gate=gate, metadata=background, drawdown_guard=drawdown_guard)
+        )
         refreshed.append(
             {
                 "name": name,
@@ -201,6 +215,22 @@ def refresh_candidate(
     return gate_json
 
 
+def evaluate_candidate_drawdown(name: str, background: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    snapshot = _required_path(background, "snapshot", name)
+    manifest = dict(background)
+    manifest["_candidate_name"] = name
+    cfg = DrawdownGuardConfig(
+        initial_capital=args.initial_capital,
+        min_observation_hours=args.min_observation_hours,
+        max_mtm_drawdown_fraction=args.max_mtm_drawdown_fraction,
+        max_realized_drawdown_fraction=args.max_realized_drawdown_fraction,
+        max_open_inventory_fraction=args.max_open_inventory_fraction,
+        max_active_order_fraction=args.max_active_order_fraction,
+        min_reward_to_trading_loss_ratio=args.min_reward_to_trading_loss_ratio,
+    )
+    return evaluate_drawdown_guard(load_snapshots(snapshot), lp_config_from_manifest(manifest), cfg)
+
+
 def run(command: list[str], out_dir: Path) -> None:
     log = out_dir / "refresh_candidate_leaderboard.log"
     with log.open("a", encoding="utf-8") as handle:
@@ -240,8 +270,8 @@ def _markdown(result: dict[str, Any]) -> str:
         f"Status: `{result['status']}`",
         f"Leader policy: `{result.get('leader_policy', 'n/a')}`",
         "",
-        "| Rank | Candidate | Status | p05/mo @ capture | Hours | Rows | Markets | Rescue feasible | Residual loss | Note |",
-        "|---:|---|---|---:|---:|---:|---:|---:|---:|---|",
+        "| Rank | Candidate | Status | p05/mo @ capture | Hours | Rows | Markets | Rescue feasible | Residual loss | DD guard | DD reward/loss | Note |",
+        "|---:|---|---|---:|---:|---:|---:|---:|---|---:|---:|---|",
     ]
     for idx, row in enumerate(result.get("candidates", []), start=1):
         lines.append(
@@ -257,6 +287,8 @@ def _markdown(result: dict[str, Any]) -> str:
                     str(row.get("unique_markets_quoted", 0)),
                     _pct(row.get("taker_rescue_feasible_rate")),
                     _money(row.get("latest_taker_residual_loss_to_zero")),
+                    str(row.get("drawdown_guard_status", "not_evaluated")),
+                    _num(row.get("drawdown_reward_to_trading_loss_ratio"), 2),
                     str(row.get("ranking_note", "")),
                 ]
             )
@@ -275,7 +307,8 @@ def _markdown(result: dict[str, Any]) -> str:
             if isinstance(item, dict) and item:
                 lines.append(
                     f"- {label}: `{item.get('name')}`; p05/mo {_money(item.get('income_p05_at_required_capture'))}; "
-                    f"hours {_num(item.get('duration_hours'), 2)}; residual {_money(item.get('latest_taker_residual_loss_to_zero'))}."
+                    f"hours {_num(item.get('duration_hours'), 2)}; residual {_money(item.get('latest_taker_residual_loss_to_zero'))}; "
+                    f"drawdown guard {item.get('drawdown_guard_status')}."
                 )
         if policy.get("note"):
             lines.append(f"- note: {policy['note']}")
@@ -302,6 +335,8 @@ def _pct(value: object) -> str:
 def _num(value: object, digits: int) -> str:
     try:
         x = float(value)
+        if math.isinf(x):
+            return "inf" if x > 0 else "-inf"
         return "n/a" if not math.isfinite(x) else f"{x:.{digits}f}"
     except (TypeError, ValueError):
         return "n/a"

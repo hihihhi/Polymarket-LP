@@ -10,6 +10,7 @@ class CandidateEvidence:
     name: str
     gate: dict[str, Any]
     metadata: dict[str, Any] | None = None
+    drawdown_guard: dict[str, Any] | None = None
 
 
 def build_candidate_leaderboard(candidates: Iterable[CandidateEvidence]) -> dict[str, Any]:
@@ -38,10 +39,22 @@ def build_candidate_leaderboard(candidates: Iterable[CandidateEvidence]) -> dict
 
 def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
     gate = _dict(candidate.gate)
+    drawdown = _dict(candidate.drawdown_guard)
     metrics = _dict(gate.get("metrics"))
     gates = _dict(gate.get("gates"))
+    drawdown_metrics = _dict(drawdown.get("metrics"))
+    drawdown_gates = _dict(drawdown.get("gates"))
     blockers = gate.get("blockers") if isinstance(gate.get("blockers"), list) else []
+    drawdown_blockers = drawdown.get("blockers") if isinstance(drawdown.get("blockers"), list) else []
     metadata = _dict(candidate.metadata)
+    has_drawdown_guard = bool(drawdown)
+    drawdown_core_passed = bool(drawdown.get("risk_core_passed", True)) if has_drawdown_guard else True
+    drawdown_sample_passed = (
+        bool(drawdown_gates.get("sample_hours_gate_passed", False)) if has_drawdown_guard else True
+    )
+    drawdown_guard_passed = (
+        bool(drawdown_gates.get("drawdown_guard_passed", False)) if has_drawdown_guard else True
+    )
     risk_gates = [
         "clob_quality_gate_passed",
         "taker_rescue_rate_gate_passed",
@@ -57,6 +70,11 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         "income_gate_passed": bool(gates.get("income_p05_gate_passed", False)),
         "risk_gates_passed": all(bool(gates.get(k, False)) for k in risk_gates),
         "sample_gates_passed": all(bool(gates.get(k, False)) for k in sample_gates),
+        "has_drawdown_guard": has_drawdown_guard,
+        "drawdown_guard_status": str(drawdown.get("status", "not_evaluated")),
+        "drawdown_core_passed": drawdown_core_passed,
+        "drawdown_sample_passed": drawdown_sample_passed,
+        "drawdown_guard_passed": drawdown_guard_passed,
         "duration_hours": _float(metrics.get("duration_hours"), 0.0),
         "quote_rows": int(_float(metrics.get("quote_rows"), 0.0)),
         "unique_markets_quoted": int(_float(metrics.get("unique_markets_quoted"), 0.0)),
@@ -67,9 +85,23 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         "taker_size_weighted_rescue_fraction": _float(metrics.get("taker_size_weighted_rescue_fraction"), math.nan),
         "latest_taker_residual_loss_to_zero": _float(metrics.get("latest_taker_residual_loss_to_zero"), math.nan),
         "latest_taker_residual_loss_fraction": _float(metrics.get("latest_taker_residual_loss_fraction"), math.nan),
+        "drawdown_reward_to_trading_loss_ratio": _float(drawdown_metrics.get("reward_to_trading_loss_ratio"), math.nan),
+        "drawdown_mtm_fraction": _float(drawdown_metrics.get("max_drawdown_mtm_fraction"), math.nan),
+        "drawdown_realized_fraction": _float(drawdown_metrics.get("max_drawdown_realized_fraction"), math.nan),
+        "drawdown_max_active_order_fraction": _float(drawdown_metrics.get("max_active_order_fraction"), math.nan),
         "blockers": [str(x) for x in blockers],
+        "drawdown_blockers": [str(x) for x in drawdown_blockers],
         "metadata": metadata,
     }
+    row["promotion_core_passed"] = bool(
+        row["income_gate_passed"] and row["risk_gates_passed"] and row["drawdown_core_passed"]
+    )
+    row["promotion_public_paper_passed"] = bool(
+        row["has_drawdown_guard"]
+        and row["promotion_core_passed"]
+        and row["sample_gates_passed"]
+        and row["drawdown_guard_passed"]
+    )
     row["ranking_note"] = _ranking_note(row)
     return row
 
@@ -80,13 +112,19 @@ def _rank_key(row: dict[str, Any]) -> tuple[float, ...]:
     rescue_fraction = _finite(row.get("taker_size_weighted_rescue_fraction"), -math.inf)
     residual_fraction = _risk_bucket(row.get("latest_taker_residual_loss_fraction"), decimals=6, default=math.inf)
     residual_loss = _risk_bucket(row.get("latest_taker_residual_loss_to_zero"), decimals=2, default=math.inf)
+    drawdown_mtm = _risk_bucket(row.get("drawdown_mtm_fraction"), decimals=6, default=math.inf)
+    reward_loss = _finite(row.get("drawdown_reward_to_trading_loss_ratio"), -math.inf)
     return (
         float(bool(row.get("public_paper_depth_ready"))),
         float(bool(row.get("income_gate_passed"))),
         float(bool(row.get("risk_gates_passed"))),
+        float(bool(row.get("drawdown_core_passed", True))),
         float(bool(row.get("sample_gates_passed"))),
+        float(bool(row.get("drawdown_guard_passed", True))),
         -residual_fraction,
         -residual_loss,
+        -drawdown_mtm,
+        reward_loss,
         income,
         rescue_rate,
         rescue_fraction,
@@ -99,7 +137,11 @@ def _rank_key(row: dict[str, Any]) -> tuple[float, ...]:
 def _policy_leaders(rows: list[dict[str, Any]]) -> dict[str, Any]:
     if not rows:
         return {}
-    eligible = [row for row in rows if row.get("income_gate_passed") and row.get("risk_gates_passed")]
+    eligible = [
+        row
+        for row in rows
+        if row.get("income_gate_passed") and row.get("risk_gates_passed") and row.get("drawdown_core_passed")
+    ]
     population = eligible or rows
     risk_first = max(population, key=_rank_key)
     income_first = max(population, key=_income_rank_key)
@@ -119,12 +161,16 @@ def _income_rank_key(row: dict[str, Any]) -> tuple[float, ...]:
     income = _finite(row.get("income_p05_at_required_capture"), -math.inf)
     residual_fraction = _risk_bucket(row.get("latest_taker_residual_loss_fraction"), decimals=6, default=math.inf)
     residual_loss = _risk_bucket(row.get("latest_taker_residual_loss_to_zero"), decimals=2, default=math.inf)
+    reward_loss = _finite(row.get("drawdown_reward_to_trading_loss_ratio"), -math.inf)
     return (
         float(bool(row.get("public_paper_depth_ready"))),
+        float(bool(row.get("drawdown_core_passed", True))),
         float(bool(row.get("sample_gates_passed"))),
+        float(bool(row.get("drawdown_guard_passed", True))),
         income,
         -residual_fraction,
         -residual_loss,
+        reward_loss,
         float(row.get("unique_markets_quoted", 0)),
         float(row.get("quote_rows", 0)),
         float(row.get("duration_hours", 0.0)),
@@ -136,7 +182,9 @@ def _sample_rank_key(row: dict[str, Any]) -> tuple[float, ...]:
     residual_fraction = _risk_bucket(row.get("latest_taker_residual_loss_fraction"), decimals=6, default=math.inf)
     return (
         float(bool(row.get("public_paper_depth_ready"))),
+        float(bool(row.get("drawdown_core_passed", True))),
         float(bool(row.get("sample_gates_passed"))),
+        float(bool(row.get("drawdown_sample_passed", True))),
         float(row.get("duration_hours", 0.0)),
         float(row.get("quote_rows", 0)),
         float(row.get("unique_markets_quoted", 0)),
@@ -155,13 +203,22 @@ def _leader_summary(row: dict[str, Any]) -> dict[str, Any]:
         "unique_markets_quoted": row.get("unique_markets_quoted"),
         "latest_taker_residual_loss_to_zero": row.get("latest_taker_residual_loss_to_zero"),
         "latest_taker_residual_loss_fraction": row.get("latest_taker_residual_loss_fraction"),
+        "drawdown_guard_status": row.get("drawdown_guard_status"),
+        "drawdown_reward_to_trading_loss_ratio": row.get("drawdown_reward_to_trading_loss_ratio"),
+        "drawdown_mtm_fraction": row.get("drawdown_mtm_fraction"),
         "ranking_note": row.get("ranking_note"),
     }
 
 
 def _ranking_note(row: dict[str, Any]) -> str:
+    if row.get("has_drawdown_guard") and not row.get("drawdown_core_passed"):
+        return "income/rescue may pass, but drawdown or reward-loss guard blocks promotion"
+    if row.get("promotion_public_paper_passed"):
+        return "public-paper income/rescue/drawdown gates passed; still needs signed paper and paid-reward proof"
     if row.get("public_paper_depth_ready"):
-        return "public-paper depth/income gates passed; still needs signed paper and paid-reward proof"
+        return "public-paper depth/income gates passed; drawdown or signed reward proof still pending"
+    if row.get("promotion_core_passed"):
+        return "income/rescue/drawdown core passes; sample gate still pending"
     if row.get("income_gate_passed") and row.get("risk_gates_passed"):
         return "income/risk scout passes; sample gate still pending"
     if row.get("risk_gates_passed"):
@@ -172,8 +229,17 @@ def _ranking_note(row: dict[str, Any]) -> str:
 def _status(leader: dict[str, Any]) -> str:
     if not leader:
         return "no_candidates"
+    if leader.get("promotion_public_paper_passed"):
+        return "public_paper_leader_income_rescue_drawdown_ready"
     if leader.get("public_paper_depth_ready"):
         return "public_paper_leader_depth_ready"
+    if (
+        leader.get("has_drawdown_guard")
+        and leader.get("income_gate_passed")
+        and leader.get("risk_gates_passed")
+        and not leader.get("drawdown_core_passed")
+    ):
+        return "public_paper_leader_drawdown_core_failed"
     if leader.get("income_gate_passed") and leader.get("risk_gates_passed"):
         return "public_paper_leader_sample_pending"
     return "no_public_paper_candidate_ready"
