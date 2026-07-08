@@ -71,9 +71,16 @@ def main() -> None:
         name, background_path = _split_named_path(item, "--candidate")
         background = json.loads(Path(background_path).read_text(encoding="utf-8-sig"))
         candidate_dir = work_dir / _safe_name(name)
-        gate_path = refresh_candidate(name, background, candidate_dir, args, seed=args.bootstrap_seed + index)
-        gate = json.loads(gate_path.read_text(encoding="utf-8-sig"))
-        drawdown_guard = evaluate_candidate_drawdown(name, background, args)
+        try:
+            gate_path = refresh_candidate(name, background, candidate_dir, args, seed=args.bootstrap_seed + index)
+            gate = json.loads(gate_path.read_text(encoding="utf-8-sig"))
+            drawdown_guard = evaluate_candidate_drawdown(name, background, args)
+            gate_path_text = str(gate_path)
+        except SystemExit as exc:
+            message = str(exc)
+            gate = _pending_gate(message)
+            drawdown_guard = _pending_drawdown(message)
+            gate_path_text = ""
         candidates.append(
             CandidateEvidence(name=name, gate=gate, metadata=background, drawdown_guard=drawdown_guard)
         )
@@ -81,7 +88,7 @@ def main() -> None:
             {
                 "name": name,
                 "background": str(background_path),
-                "gate": str(gate_path),
+                "gate": gate_path_text,
                 "candidate_dir": str(candidate_dir),
             }
         )
@@ -229,6 +236,51 @@ def evaluate_candidate_drawdown(name: str, background: dict[str, Any], args: arg
         min_reward_to_trading_loss_ratio=args.min_reward_to_trading_loss_ratio,
     )
     return evaluate_drawdown_guard(load_snapshots(snapshot), lp_config_from_manifest(manifest), cfg)
+
+
+def _pending_gate(message: str) -> dict[str, Any]:
+    return {
+        "status": "candidate_data_pending",
+        "metrics": {
+            "duration_hours": 0.0,
+            "quote_rows": 0,
+            "unique_markets_quoted": 0,
+            "income_p05_at_required_capture": math.nan,
+            "taker_rescue_feasible_rate": math.nan,
+            "taker_size_weighted_rescue_fraction": math.nan,
+            "latest_taker_residual_loss_to_zero": math.nan,
+            "latest_taker_residual_loss_fraction": math.nan,
+        },
+        "gates": {
+            "depth_ready": False,
+            "income_p05_gate_passed": False,
+            "clob_quality_gate_passed": False,
+            "taker_rescue_rate_gate_passed": False,
+            "taker_pair_edge_gate_passed": False,
+            "taker_depth_gate_passed": False,
+            "taker_residual_loss_gate_passed": False,
+            "sample_hours_gate_passed": False,
+            "quote_rows_gate_passed": False,
+            "book_scenario_gate_passed": False,
+        },
+        "blockers": [message],
+    }
+
+
+def _pending_drawdown(message: str) -> dict[str, Any]:
+    return {
+        "status": "drawdown_guard_data_pending",
+        "risk_core_passed": False,
+        "gates": {"sample_hours_gate_passed": False, "drawdown_guard_passed": False},
+        "metrics": {
+            "duration_hours": 0.0,
+            "max_drawdown_mtm_fraction": math.nan,
+            "max_drawdown_realized_fraction": math.nan,
+            "reward_to_trading_loss_ratio": math.nan,
+            "max_active_order_fraction": math.nan,
+        },
+        "blockers": [message],
+    }
 
 
 def run(command: list[str], out_dir: Path) -> None:

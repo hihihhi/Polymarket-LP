@@ -59,7 +59,10 @@ def main() -> None:
         manifest = _load_json(path)
         snapshot_path = manifest.get("snapshot")
         if not snapshot_path:
-            rows.append({"name": name, "status": "drawdown_guard_failed", "blockers": ["manifest missing snapshot"]})
+            rows.append(_pending_result(name, "manifest missing snapshot"))
+            continue
+        if not Path(str(snapshot_path)).exists():
+            rows.append(_pending_result(name, f"snapshot path does not exist: {snapshot_path}"))
             continue
         manifest["_candidate_name"] = name
         lp_cfg = lp_config_from_manifest(manifest)
@@ -137,6 +140,25 @@ def _split_named_path(value: str) -> tuple[str, str]:
 
 def _load_json(path: str | Path) -> dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8-sig"))
+
+
+def _pending_result(name: str, message: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "status": "drawdown_guard_data_pending",
+        "risk_core_passed": False,
+        "gates": {"sample_hours_gate_passed": False, "drawdown_guard_passed": False},
+        "metrics": {
+            "duration_hours": 0.0,
+            "total_pnl_usdc": 0.0,
+            "max_drawdown_mtm_fraction": math.nan,
+            "max_drawdown_realized_fraction": math.nan,
+            "max_open_inventory_fraction": math.nan,
+            "max_active_order_fraction": math.nan,
+            "reward_to_trading_loss_ratio": math.nan,
+        },
+        "blockers": [message],
+    }
 
 
 def _json_safe(value: Any) -> Any:

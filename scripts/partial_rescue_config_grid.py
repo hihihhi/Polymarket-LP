@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from polymarket_lp.depth_gate import DepthReadinessConfig, evaluate_depth_readiness  # noqa: E402
+from polymarket_lp.drawdown_guard import DrawdownGuardConfig, evaluate_drawdown_guard  # noqa: E402
 from polymarket_lp.lp_backtest import LPConfig, load_snapshots  # noqa: E402
 from polymarket_lp.paper import PaperAnalysisConfig, analyze_paper_quotes, build_paper_quotes  # noqa: E402
 from polymarket_lp.rescue_stress import RescueStressConfig, evaluate_rescue_stress  # noqa: E402
@@ -85,6 +86,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-taker-rescue-depth-fraction", type=float, default=1.0)
     p.add_argument("--taker-rescue-min-pair-edge-per-share", type=float, default=0.0)
     p.add_argument("--max-latest-taker-residual-loss-fraction", type=float, default=0.05)
+    p.add_argument("--max-mtm-drawdown-fraction", type=float, default=0.10)
+    p.add_argument("--max-realized-drawdown-fraction", type=float, default=0.05)
+    p.add_argument("--max-open-inventory-fraction", type=float, default=0.50)
+    p.add_argument("--max-active-order-fraction", type=float, default=0.70)
+    p.add_argument("--min-reward-to-trading-loss-ratio", type=float, default=3.0)
     return p.parse_args()
 
 
@@ -147,6 +153,19 @@ def main() -> None:
                 max_latest_taker_residual_loss_fraction=args.max_latest_taker_residual_loss_fraction,
             ),
         )
+        drawdown = evaluate_drawdown_guard(
+            snapshots,
+            cfg,
+            DrawdownGuardConfig(
+                initial_capital=args.initial_capital,
+                min_observation_hours=args.min_observation_hours,
+                max_mtm_drawdown_fraction=args.max_mtm_drawdown_fraction,
+                max_realized_drawdown_fraction=args.max_realized_drawdown_fraction,
+                max_open_inventory_fraction=args.max_open_inventory_fraction,
+                max_active_order_fraction=args.max_active_order_fraction,
+                min_reward_to_trading_loss_ratio=args.min_reward_to_trading_loss_ratio,
+            ),
+        )
         depth = evaluate_depth_readiness(
             target_status=target_status,
             rescue_stress=rescue,
@@ -172,6 +191,7 @@ def main() -> None:
             target_status=target_status,
             rescue=rescue,
             depth=depth,
+            drawdown=drawdown,
         )
         candidates.append(row)
         quote_by_key[(quote_size, residual_cap, offset, density)] = quotes
@@ -182,13 +202,15 @@ def main() -> None:
             [
                 "depth_ready",
                 "risk_income_gate_passed",
+                "drawdown_core_passed",
                 "strict_topbook_rescue_passed",
                 "latest_taker_residual_loss_fraction",
                 "partial_rescue_max_residual_loss_usdc",
                 "income_p05_at_required_capture",
+                "drawdown_reward_to_trading_loss_ratio",
                 "avg_active_pair_notional",
             ],
-            ascending=[False, False, False, True, True, False, True],
+            ascending=[False, False, False, False, True, True, False, False, True],
         )
     frame.to_csv(out / "partial_rescue_config_grid.csv", index=False)
     selected = frame.iloc[0].to_dict() if len(frame) else {}
@@ -282,12 +304,15 @@ def _candidate_row(
     target_status: dict[str, Any],
     rescue: dict[str, Any],
     depth: dict[str, Any],
+    drawdown: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     paper = _dict(target_status.get("paper_summary"))
     bootstrap = _dict(target_status.get("bootstrap_target"))
     depth_metrics = _dict(depth.get("metrics"))
     depth_gates = _dict(depth.get("gates"))
     rescue_metrics = _dict(rescue.get("metrics"))
+    drawdown = _dict(drawdown)
+    drawdown_metrics = _dict(drawdown.get("metrics"))
     risk_income_gate = bool(
         depth_gates.get("income_p05_gate_passed")
         and depth_gates.get("diversification_gate_passed")
@@ -325,6 +350,12 @@ def _candidate_row(
         "latest_taker_residual_loss_fraction": _float(depth_metrics.get("latest_taker_residual_loss_fraction")),
         "taker_rescued_size_fraction_p05": _float(rescue_metrics.get("taker_rescued_size_fraction_p05")),
         "strict_topbook_rescue_passed": strict_topbook_rescue,
+        "drawdown_status": drawdown.get("status", "not_evaluated"),
+        "drawdown_core_passed": bool(drawdown.get("risk_core_passed", True)),
+        "drawdown_mtm_fraction": _float(drawdown_metrics.get("max_drawdown_mtm_fraction")),
+        "drawdown_realized_fraction": _float(drawdown_metrics.get("max_drawdown_realized_fraction")),
+        "drawdown_reward_to_trading_loss_ratio": _float(drawdown_metrics.get("reward_to_trading_loss_ratio")),
+        "drawdown_max_active_order_fraction": _float(drawdown_metrics.get("max_active_order_fraction")),
         "risk_income_gate_passed": risk_income_gate,
         "depth_ready": bool(depth_gates.get("depth_ready")),
         "depth_status": depth.get("status"),
@@ -337,8 +368,10 @@ def _selection_status(selected: dict[str, Any]) -> str:
         return "no_candidates"
     if bool(selected.get("depth_ready")):
         return "selected_depth_ready"
+    if bool(selected.get("risk_income_gate_passed")) and bool(selected.get("drawdown_core_passed")):
+        return "selected_risk_income_drawdown_passed_sample_not_ready"
     if bool(selected.get("risk_income_gate_passed")):
-        return "selected_risk_income_passed_sample_not_ready"
+        return "selected_risk_income_passed_drawdown_failed"
     return "selected_best_failed"
 
 

@@ -44,9 +44,10 @@ from polymarket_lp.candidate_leaderboard import CandidateEvidence, build_candida
 from polymarket_lp.drawdown_guard import DrawdownGuardConfig, evaluate_drawdown_guard, lp_config_from_manifest
 from scripts.paper_replay import make_lp_config
 from scripts.launch_live_paper_candidate import LaunchCandidateConfig, write_launch_artifacts
-from scripts.refresh_candidate_leaderboard import _safe_name, _split_named_path
+from scripts.refresh_candidate_leaderboard import _pending_drawdown, _pending_gate, _safe_name, _split_named_path
 from scripts.update_target_status import _bootstrap_target_from_quotes, _capture_stress_grid, _json_safe
 from scripts.target_config_grid import SelectionConfig, _candidate_row
+import scripts.partial_rescue_config_grid as partial_rescue_grid
 from scripts.rolling_target_windows import _time_windows
 
 
@@ -2003,6 +2004,31 @@ def test_refresh_candidate_leaderboard_parses_named_paths_safely() -> None:
     assert _safe_name("q300/cap10 d0.06") == "q300_cap10_d0.06"
     with pytest.raises(SystemExit):
         _split_named_path("missing_equals", "--candidate")
+
+
+def test_refresh_candidate_leaderboard_pending_candidate_is_non_promotable() -> None:
+    gate = _pending_gate("snapshot missing")
+    drawdown = _pending_drawdown("snapshot missing")
+    result = build_candidate_leaderboard([CandidateEvidence("pending", gate, drawdown_guard=drawdown)])
+    assert result["status"] == "no_public_paper_candidate_ready"
+    assert result["leader"]["name"] == "pending"
+    assert not result["leader"]["income_gate_passed"]
+    assert not result["leader"]["drawdown_core_passed"]
+
+
+def test_partial_rescue_grid_selection_requires_drawdown_core() -> None:
+    assert (
+        partial_rescue_grid._selection_status(
+            {"depth_ready": False, "risk_income_gate_passed": True, "drawdown_core_passed": True}
+        )
+        == "selected_risk_income_drawdown_passed_sample_not_ready"
+    )
+    assert (
+        partial_rescue_grid._selection_status(
+            {"depth_ready": False, "risk_income_gate_passed": True, "drawdown_core_passed": False}
+        )
+        == "selected_risk_income_passed_drawdown_failed"
+    )
 
 
 def test_launch_live_paper_candidate_generates_parameterized_public_scripts(tmp_path) -> None:
