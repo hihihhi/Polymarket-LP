@@ -1865,6 +1865,43 @@ def test_candidate_leaderboard_prefers_depth_ready_then_residual_risk() -> None:
     assert result["candidates"][1]["name"] == "weak_short_sample"
 
 
+def test_candidate_leaderboard_ignores_tiny_residual_float_noise_before_income() -> None:
+    base_gate = {
+        "status": "depth_not_ready",
+        "metrics": {
+            "duration_hours": 1,
+            "quote_rows": 40,
+            "unique_markets_quoted": 4,
+            "taker_rescue_feasible_rate": 0.97,
+            "taker_size_weighted_rescue_fraction": 0.99,
+            "latest_taker_residual_loss_fraction": 0.005,
+            "latest_taker_residual_loss_to_zero": 10.0,
+        },
+        "gates": {
+            "depth_ready": False,
+            "income_p05_gate_passed": True,
+            "clob_quality_gate_passed": True,
+            "taker_rescue_rate_gate_passed": True,
+            "taker_pair_edge_gate_passed": True,
+            "taker_depth_gate_passed": True,
+            "taker_residual_loss_gate_passed": True,
+            "sample_hours_gate_passed": False,
+            "quote_rows_gate_passed": True,
+            "book_scenario_gate_passed": True,
+        },
+    }
+    lower_income = json.loads(json.dumps(base_gate))
+    lower_income["metrics"]["income_p05_at_required_capture"] = 1400
+    lower_income["metrics"]["latest_taker_residual_loss_to_zero"] = 9.999999999999995
+    higher_income = json.loads(json.dumps(base_gate))
+    higher_income["metrics"]["income_p05_at_required_capture"] = 1800
+    higher_income["metrics"]["latest_taker_residual_loss_to_zero"] = 10.000000000000005
+    result = build_candidate_leaderboard(
+        [CandidateEvidence("lower_income_float_edge", lower_income), CandidateEvidence("higher_income", higher_income)]
+    )
+    assert result["leader"]["name"] == "higher_income"
+
+
 def test_refresh_candidate_leaderboard_parses_named_paths_safely() -> None:
     assert _split_named_path("q300=C:/tmp/bg.json", "--candidate") == ("q300", "C:/tmp/bg.json")
     assert _safe_name("q300/cap10 d0.06") == "q300_cap10_d0.06"

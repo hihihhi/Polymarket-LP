@@ -75,8 +75,8 @@ def _rank_key(row: dict[str, Any]) -> tuple[float, ...]:
     income = _finite(row.get("income_p05_at_required_capture"), -math.inf)
     rescue_rate = _finite(row.get("taker_rescue_feasible_rate"), -math.inf)
     rescue_fraction = _finite(row.get("taker_size_weighted_rescue_fraction"), -math.inf)
-    residual_fraction = _finite(row.get("latest_taker_residual_loss_fraction"), math.inf)
-    residual_loss = _finite(row.get("latest_taker_residual_loss_to_zero"), math.inf)
+    residual_fraction = _risk_bucket(row.get("latest_taker_residual_loss_fraction"), decimals=6, default=math.inf)
+    residual_loss = _risk_bucket(row.get("latest_taker_residual_loss_to_zero"), decimals=2, default=math.inf)
     return (
         float(bool(row.get("public_paper_depth_ready"))),
         float(bool(row.get("income_gate_passed"))),
@@ -127,3 +127,10 @@ def _float(value: Any, default: float = math.nan) -> float:
 def _finite(value: Any, default: float) -> float:
     value = _float(value, default)
     return value if math.isfinite(value) else default
+
+
+def _risk_bucket(value: Any, *, decimals: int, default: float) -> float:
+    """Round risk metrics before ranking so floating noise cannot promote a worse income candidate."""
+
+    value = _finite(value, default)
+    return round(value, decimals) if math.isfinite(value) else default
