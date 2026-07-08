@@ -128,24 +128,25 @@ def evaluate_rescue_stress(quotes: pd.DataFrame, cfg: RescueStressConfig | None 
         if cfg.initial_capital > 0
         else math.inf,
     }
+    tolerance = 1e-12
     gates = {
-        "price_feasible_rate_passed": metrics["price_feasible_rate"] >= cfg.min_price_feasible_rate,
+        "price_feasible_rate_passed": metrics["price_feasible_rate"] >= cfg.min_price_feasible_rate - tolerance,
         "latest_blocked_loss_gate_passed": metrics["latest_blocked_loss_fraction"]
-        <= cfg.max_latest_blocked_loss_fraction,
+        <= cfg.max_latest_blocked_loss_fraction + tolerance,
         "immediate_exit_loss_gate_passed": metrics["latest_immediate_exit_loss_fraction"]
-        <= cfg.max_immediate_exit_loss_fraction,
-        "pair_edge_gate_passed": min_edge >= cfg.rescue_min_pair_edge_per_share - 1e-12,
+        <= cfg.max_immediate_exit_loss_fraction + tolerance,
+        "pair_edge_gate_passed": min_edge >= cfg.rescue_min_pair_edge_per_share - tolerance,
         "taker_rescue_depth_gate_passed": (not cfg.require_taker_rescue_depth)
         or (
             metrics["taker_rescue_book_scenarios"] > 0
             and math.isfinite(taker_rate)
-            and taker_rate >= cfg.min_taker_rescue_feasible_rate
+            and taker_rate >= cfg.min_taker_rescue_feasible_rate - tolerance
         ),
         "taker_residual_loss_gate_passed": (not cfg.require_taker_residual_loss)
         or (
             math.isfinite(metrics["latest_taker_residual_loss_fraction"])
             and metrics["latest_taker_residual_loss_fraction"]
-            <= cfg.max_latest_taker_residual_loss_fraction
+            <= cfg.max_latest_taker_residual_loss_fraction + tolerance
         ),
     }
     gates["rescue_stress_passed"] = bool(all(gates.values()))

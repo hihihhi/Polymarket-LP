@@ -64,22 +64,23 @@ def evaluate_depth_readiness(
     residual_loss_fraction = _float(rescue_metrics.get("latest_taker_residual_loss_fraction"), math.nan)
     size_weighted_rescue_fraction = _float(rescue_metrics.get("taker_size_weighted_rescue_fraction"), math.nan)
     depth_gate_passed = math.isfinite(min_depth) and min_depth >= cfg.min_taker_rescue_depth_fraction - 1e-12
+    tolerance = 1e-12
     residual_gate_passed = (
         math.isfinite(residual_loss_fraction)
-        and residual_loss_fraction <= cfg.max_latest_taker_residual_loss_fraction
+        and residual_loss_fraction <= cfg.max_latest_taker_residual_loss_fraction + tolerance
     )
 
     gates = {
-        "income_p05_gate_passed": math.isfinite(income_p05) and income_p05 >= cfg.target_monthly_usdc,
-        "sample_hours_gate_passed": duration_hours >= cfg.min_observation_hours,
+        "income_p05_gate_passed": math.isfinite(income_p05) and income_p05 >= cfg.target_monthly_usdc - tolerance,
+        "sample_hours_gate_passed": duration_hours >= cfg.min_observation_hours - tolerance,
         "quote_rows_gate_passed": quote_rows >= cfg.min_quote_rows,
         "diversification_gate_passed": unique_markets >= cfg.min_unique_markets,
         "clob_quality_gate_passed": (not cfg.require_clob_book_quality) or clob_quality_rate >= 0.99,
         "book_scenario_gate_passed": book_scenarios >= cfg.min_book_scenarios,
         "taker_rescue_rate_gate_passed": math.isfinite(taker_rate)
-        and taker_rate >= cfg.min_taker_rescue_feasible_rate,
+        and taker_rate >= cfg.min_taker_rescue_feasible_rate - tolerance,
         "taker_pair_edge_gate_passed": math.isfinite(min_edge)
-        and min_edge >= cfg.min_taker_rescue_pair_edge_per_share - 1e-12,
+        and min_edge >= cfg.min_taker_rescue_pair_edge_per_share - tolerance,
         "taker_depth_gate_passed": depth_gate_passed or (cfg.allow_partial_taker_rescue and residual_gate_passed),
         "taker_residual_loss_gate_passed": (not cfg.allow_partial_taker_rescue) or residual_gate_passed,
     }

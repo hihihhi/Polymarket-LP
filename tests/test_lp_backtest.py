@@ -1639,6 +1639,37 @@ def test_depth_readiness_can_accept_partial_rescue_residual_cap() -> None:
     assert result["gates"]["taker_residual_loss_gate_passed"]
 
 
+def test_depth_readiness_residual_cap_has_float_tolerance() -> None:
+    target_status = {
+        "paper_summary": {"duration_hours": 6.0, "quote_rows": 24, "quote_data_quality_counts": {"clob_book_both_sides": 24}},
+        "target_monitor": {
+            "input": {"duration_hours": 6.0, "quote_rows": 24, "unique_markets_quoted": 2},
+            "target_math": {"net_monthly_after_loss_haircut": 3000},
+        },
+        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1000.0}],
+    }
+    rescue = {
+        "metrics": {
+            "taker_rescue_book_scenarios": 24,
+            "taker_rescue_feasible_rate": 0.80,
+            "taker_rescue_min_pair_edge_per_share": 0.0,
+            "taker_rescue_min_depth_fraction": 0.75,
+            "latest_taker_residual_loss_to_zero": 100.0,
+            "latest_taker_residual_loss_fraction": 0.05000000000000001,
+        }
+    }
+    result = evaluate_depth_readiness(
+        target_status=target_status,
+        rescue_stress=rescue,
+        cfg=DepthReadinessConfig(
+            allow_partial_taker_rescue=True,
+            max_latest_taker_residual_loss_fraction=0.05,
+        ),
+    )
+    assert result["status"] == "depth_ready"
+    assert result["gates"]["taker_residual_loss_gate_passed"]
+
+
 def test_depth_readiness_blocks_short_non_depth_sample() -> None:
     result = evaluate_depth_readiness(
         target_status={
