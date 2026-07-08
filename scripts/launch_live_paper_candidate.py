@@ -48,7 +48,7 @@ class LaunchCandidateConfig:
     min_target_margin: float = 1.0
     max_active_pair_notional: float = 1200.0
     max_pending_quote_rate: float = 0.05
-    min_unique_markets: int = 2
+    min_unique_markets: int = 4
     min_quote_rows_6h: int = 24
     min_book_scenarios_6h: int = 24
     min_quote_rows_24h: int = 96

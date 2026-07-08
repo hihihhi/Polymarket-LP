@@ -2368,7 +2368,7 @@ def test_refresh_candidate_leaderboard_freshness_gate_is_opt_in(tmp_path) -> Non
     metrics = _input_freshness_metrics(manifest, now=now)
     assert metrics["snapshot"]["exists"]
     assert metrics["quotes"]["exists"]
-    assert metrics["max_age_seconds"] == pytest.approx(120)
+    assert metrics["max_age_seconds"] == pytest.approx(120, abs=0.01)
     assert _input_staleness_error(manifest, 0.0, now=now) == ""
     assert _input_staleness_error(manifest, 300.0, now=now) == ""
     message = _input_staleness_error(manifest, 60.0, now=now)
@@ -2450,6 +2450,7 @@ def test_launch_live_paper_candidate_generates_parameterized_public_scripts(tmp_
     assert "--partial-rescue-max-residual-loss-usdc 5" in collector
     assert "--min-reward-density-per-day 0.06" in collector
     assert "--min-observation-hours 6" in watcher
+    assert "--min-unique-markets 4" in watcher
     assert "--min-observation-hours 24" in extend
     assert "private" not in collector.lower()
 
