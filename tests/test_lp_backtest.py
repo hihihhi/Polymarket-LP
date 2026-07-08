@@ -42,6 +42,7 @@ from polymarket_lp.rescue_stress import RescueStressConfig, evaluate_rescue_stre
 from polymarket_lp.depth_gate import DepthReadinessConfig, evaluate_depth_readiness
 from polymarket_lp.candidate_leaderboard import CandidateEvidence, build_candidate_leaderboard
 from scripts.paper_replay import make_lp_config
+from scripts.refresh_candidate_leaderboard import _safe_name, _split_named_path
 from scripts.update_target_status import _bootstrap_target_from_quotes, _capture_stress_grid, _json_safe
 from scripts.target_config_grid import SelectionConfig, _candidate_row
 from scripts.rolling_target_windows import _time_windows
@@ -1861,3 +1862,10 @@ def test_candidate_leaderboard_prefers_depth_ready_then_residual_risk() -> None:
     assert result["status"] == "public_paper_leader_depth_ready"
     assert result["leader"]["name"] == "ready"
     assert result["candidates"][1]["name"] == "weak_short_sample"
+
+
+def test_refresh_candidate_leaderboard_parses_named_paths_safely() -> None:
+    assert _split_named_path("q300=C:/tmp/bg.json", "--candidate") == ("q300", "C:/tmp/bg.json")
+    assert _safe_name("q300/cap10 d0.06") == "q300_cap10_d0.06"
+    with pytest.raises(SystemExit):
+        _split_named_path("missing_equals", "--candidate")
