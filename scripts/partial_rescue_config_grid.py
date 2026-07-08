@@ -136,7 +136,6 @@ def main() -> None:
     )
 
     candidates: list[dict[str, Any]] = []
-    quote_by_key: dict[tuple[float, float, float, float, float, float, float, float, bool, float], pd.DataFrame] = {}
     for (
         quote_size,
         residual_cap,
@@ -268,20 +267,6 @@ def main() -> None:
             capital=capital,
         )
         candidates.append(row)
-        quote_by_key[
-            (
-                quote_size,
-                residual_cap,
-                offset,
-                density,
-                max_unpaired_market,
-                max_total_unpaired,
-                max_cluster_unpaired,
-                max_unpaired_minutes,
-                depth_cap_quote_size,
-                depth_quote_size_fraction,
-            )
-        ] = quotes
 
     frame = pd.DataFrame(candidates)
     if not frame.empty:
@@ -330,21 +315,9 @@ def main() -> None:
         "safety": "paper research only; no private keys, order signing, order submission, or cancellation",
     }
     if selected:
-        key = (
-            float(selected["quote_size"]),
-            float(selected["partial_rescue_max_residual_loss_usdc"]),
-            float(selected["quote_offset"]),
-            float(selected["min_reward_density_per_day"]),
-            float(selected["max_unpaired_per_market"]),
-            float(selected["max_total_unpaired"]),
-            float(selected["max_cluster_unpaired"]),
-            float(selected["max_unpaired_minutes"]),
-            bool(selected["depth_cap_quote_size"]),
-            float(selected["depth_quote_size_fraction"]),
-        )
         selected_quotes = Path(args.selected_quotes) if args.selected_quotes else out / "selected_quotes.csv"
         selected_quotes.parent.mkdir(parents=True, exist_ok=True)
-        quote_by_key[key].to_csv(selected_quotes, index=False)
+        build_paper_quotes(snapshots, _lp_config_from_selected(selected, args)).to_csv(selected_quotes, index=False)
         payload["selected_quotes"] = str(selected_quotes)
     (out / "partial_rescue_config_selection.json").write_text(
         json.dumps(_json_safe(payload), indent=2, allow_nan=False) + "\n",
@@ -518,6 +491,36 @@ def _selection_status(selected: dict[str, Any]) -> str:
     if bool(selected.get("risk_income_gate_passed")) and not drawdown_passed:
         return "selected_risk_income_passed_drawdown_failed"
     return "selected_best_failed"
+
+
+def _lp_config_from_selected(selected: dict[str, Any], args: argparse.Namespace) -> LPConfig:
+    """Rebuild the selected LP config without retaining every grid quote frame.
+
+    Large grids can contain thousands of parameter combinations. Persisting every
+    generated quote DataFrame only to write one selected CSV causes avoidable RAM
+    growth; recomputing the selected quotes is deterministic and keeps broad
+    research sweeps bounded by the current candidate, not all candidates.
+    """
+
+    return LPConfig(
+        quote_size_shares=float(selected["quote_size"]),
+        quote_offset=float(selected["quote_offset"]),
+        safety_margin=args.safety_margin,
+        active_capital_limit=args.active_capital_limit,
+        max_unpaired_per_market=float(selected["max_unpaired_per_market"]),
+        max_total_unpaired=float(selected["max_total_unpaired"]),
+        max_cluster_unpaired=float(selected["max_cluster_unpaired"]),
+        max_unpaired_minutes=float(selected["max_unpaired_minutes"]),
+        excluded_categories=args.excluded_categories,
+        min_reward_density_per_day=float(selected["min_reward_density_per_day"]),
+        max_recent_vol=args.max_recent_vol,
+        max_recent_jump=args.max_recent_jump,
+        vol_quote_multiplier=args.vol_quote_multiplier,
+        depth_cap_quote_size=bool(selected["depth_cap_quote_size"]),
+        depth_quote_size_fraction=float(selected["depth_quote_size_fraction"]),
+        min_depth_capped_quote_size_shares=args.min_depth_capped_quote_size,
+        partial_rescue_max_residual_loss_usdc=float(selected["partial_rescue_max_residual_loss_usdc"]),
+    )
 
 
 def _float_grid(text: str) -> list[float]:
