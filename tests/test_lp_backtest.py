@@ -41,6 +41,7 @@ from polymarket_lp.hedge import HedgeFeasibilityConfig, evaluate_hedge_feasibili
 from polymarket_lp.rescue_stress import RescueStressConfig, evaluate_rescue_stress
 from polymarket_lp.depth_gate import DepthReadinessConfig, evaluate_depth_readiness
 from polymarket_lp.candidate_leaderboard import CandidateEvidence, build_candidate_leaderboard
+from polymarket_lp.drawdown_guard import DrawdownGuardConfig, evaluate_drawdown_guard, lp_config_from_manifest
 from scripts.paper_replay import make_lp_config
 from scripts.launch_live_paper_candidate import LaunchCandidateConfig, write_launch_artifacts
 from scripts.refresh_candidate_leaderboard import _safe_name, _split_named_path
@@ -1979,3 +1980,73 @@ def test_launch_live_paper_candidate_generates_parameterized_public_scripts(tmp_
     assert "--min-observation-hours 6" in watcher
     assert "--min-observation-hours 24" in extend
     assert "private" not in collector.lower()
+
+
+def test_lp_config_from_manifest_maps_candidate_risk_parameters() -> None:
+    cfg = lp_config_from_manifest(
+        {
+            "quote_size": 200,
+            "partial_rescue_max_residual_loss_usdc": 1,
+            "min_reward_density_per_day": 0.06,
+            "active_capital_limit": 1200,
+            "quote_offset": 0.02,
+            "max_recent_vol": 0.006,
+            "max_recent_jump": 0.025,
+            "vol_quote_multiplier": 0.5,
+        }
+    )
+    assert cfg.quote_size_shares == 200
+    assert cfg.partial_rescue_max_residual_loss_usdc == 1
+    assert cfg.min_reward_density_per_day == 0.06
+    assert cfg.active_capital_limit == 1200
+
+
+def test_lp_config_from_manifest_infers_legacy_candidate_text() -> None:
+    cfg = lp_config_from_manifest({"_candidate_name": "q300_cap50_d010_baseline", "strategy": "q300safe_partial_rescue_cap50"})
+    assert cfg.quote_size_shares == 300
+    assert cfg.partial_rescue_max_residual_loss_usdc == 50
+    assert cfg.min_reward_density_per_day == 0.10
+
+
+def test_drawdown_guard_separates_short_sample_from_risk_failure() -> None:
+    snapshots = make_synthetic_snapshots(seed=5, days=1, n_markets=6)
+    lp_cfg = LPConfig(
+        quote_size_shares=25,
+        active_capital_limit=500,
+        excluded_categories="sports,crypto",
+        min_reward_density_per_day=0.0,
+    )
+    result = evaluate_drawdown_guard(
+        snapshots,
+        lp_cfg,
+        DrawdownGuardConfig(
+            min_observation_hours=10_000,
+            max_mtm_drawdown_fraction=1.0,
+            max_realized_drawdown_fraction=1.0,
+            max_open_inventory_fraction=1.0,
+            max_active_order_fraction=1.0,
+            min_reward_to_trading_loss_ratio=0.0,
+        ),
+    )
+    assert result["status"] == "drawdown_guard_sample_pending"
+    assert result["risk_core_passed"]
+    assert not result["gates"]["sample_hours_gate_passed"]
+    assert "max_drawdown_mtm_fraction" in result["metrics"]
+
+
+def test_drawdown_guard_blocks_oversized_active_orders() -> None:
+    snapshots = make_synthetic_snapshots(seed=6, days=1, n_markets=6)
+    result = evaluate_drawdown_guard(
+        snapshots,
+        LPConfig(quote_size_shares=100, active_capital_limit=1200, min_reward_density_per_day=0.0),
+        DrawdownGuardConfig(
+            min_observation_hours=0,
+            max_mtm_drawdown_fraction=1.0,
+            max_realized_drawdown_fraction=1.0,
+            max_open_inventory_fraction=1.0,
+            max_active_order_fraction=0.001,
+            min_reward_to_trading_loss_ratio=0.0,
+        ),
+    )
+    assert result["status"] == "drawdown_guard_failed"
+    assert not result["gates"]["active_order_gate_passed"]
