@@ -49,6 +49,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-single-cluster-active-fraction", type=float, default=0.70)
     p.add_argument("--max-single-market-unhedged-loss-fraction", type=float, default=0.20)
     p.add_argument("--max-single-cluster-unhedged-loss-fraction", type=float, default=0.50)
+    p.add_argument("--target-monthly", type=float, default=1000.0)
+    p.add_argument("--reference-capture-rate", type=float, default=0.50)
+    p.add_argument("--max-capture-needed-after-cap-loss", type=float, default=0.40)
     p.add_argument("--exit-slippage", type=float, default=0.005)
     p.add_argument("--days-per-month", type=float, default=30.0)
     return p.parse_args()
@@ -70,6 +73,9 @@ def main() -> None:
         max_single_cluster_active_fraction=args.max_single_cluster_active_fraction,
         max_single_market_unhedged_loss_fraction=args.max_single_market_unhedged_loss_fraction,
         max_single_cluster_unhedged_loss_fraction=args.max_single_cluster_unhedged_loss_fraction,
+        target_monthly_usdc=args.target_monthly,
+        reference_capture_rate=args.reference_capture_rate,
+        max_capture_needed_after_cap_loss=args.max_capture_needed_after_cap_loss,
         exit_slippage=args.exit_slippage,
         days_per_month=args.days_per_month,
     )
@@ -118,7 +124,10 @@ def _markdown(result: dict[str, Any]) -> str:
         f"| All-active unhedged one-side loss to zero | {_money(m.get('all_active_unhedged_one_side_loss_to_zero'))} ({_pct(m.get('unhedged_loss_fraction_of_capital'))}) |",
         f"| Configured inventory-cap loss to zero | {_money(m.get('configured_inventory_cap_loss_to_zero'))} ({_pct(m.get('configured_inventory_cap_loss_fraction'))}) |",
         f"| Immediate-exit slippage loss if caps reject | {_money(m.get('immediate_exit_slippage_loss_if_caps_reject'))} |",
-        f"| 50% capture p05 monthly income | {_money(m.get('captured_p05_monthly_income_usdc'))} |",
+        f"| Reference-capture p05 monthly income | {_money(m.get('captured_p05_monthly_income_usdc'))} at {_pct(m.get('reference_capture_rate'))} |",
+        f"| After cap-loss p05 monthly income | {_money(m.get('reference_capture_p05_monthly_after_cap_loss'))} |",
+        f"| Capture needed: target / after cap loss | {_pct(m.get('capture_needed_for_target'))} / {_pct(m.get('capture_needed_after_cap_loss'))} |",
+        f"| After-cap income buffer | {_pct(m.get('after_cap_loss_income_buffer_at_reference_capture'))} |",
         f"| Recovery days: unhedged / configured-cap | {_num(m.get('unhedged_recovery_days_at_p05_income'))} / {_num(m.get('capped_recovery_days_at_p05_income'))} |",
         f"| Max pair cost / min locked pair edge | {_num(m.get('max_pair_cost_per_share'), 4)} / {_money(m.get('min_locked_pair_edge_usdc'))} |",
         "",

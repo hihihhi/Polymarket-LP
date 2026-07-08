@@ -1137,11 +1137,12 @@ def test_capital_risk_stress_reports_recovery_days() -> None:
             {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m2", "cluster": "macro", "side": "NO", "bid_price": 0.55, "size_shares": 100, "active_order_notional_pair": 95},
         ]
     )
-    target_status = {"capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200.0}]}
+    target_status = {"capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1500.0}]}
     result = evaluate_capital_risk_stress(quotes, target_status=target_status, cfg=CapitalRiskStressConfig())
     assert result["metrics"]["all_active_unhedged_one_side_loss_to_zero"] == 135.0
     assert result["metrics"]["configured_inventory_cap_loss_to_zero"] == 115.0
-    assert result["metrics"]["capped_recovery_days_at_p05_income"] == 115.0 / 40.0
+    assert result["metrics"]["capped_recovery_days_at_p05_income"] == 115.0 / 50.0
+    assert result["metrics"]["capture_needed_after_cap_loss"] == pytest.approx(0.37166666666666665)
     assert result["gates"]["capital_risk_stress_passed"]
 
 
@@ -1197,6 +1198,26 @@ def test_capital_risk_stress_blocks_single_market_concentration() -> None:
     assert not result["gates"]["latest_market_count_gate_passed"]
     assert not result["gates"]["single_market_active_gate_passed"]
     assert not result["gates"]["single_market_loss_gate_passed"]
+    assert not result["gates"]["capital_risk_stress_passed"]
+
+
+def test_capital_risk_stress_blocks_high_capture_needed_after_cap_loss() -> None:
+    quotes = pd.DataFrame(
+        [
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m1", "cluster": "macro", "side": "YES", "bid_price": 0.5, "size_shares": 100, "active_order_notional_pair": 95},
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m1", "cluster": "macro", "side": "NO", "bid_price": 0.45, "size_shares": 100, "active_order_notional_pair": 95},
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m2", "cluster": "other", "side": "YES", "bid_price": 0.5, "size_shares": 100, "active_order_notional_pair": 95},
+            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m2", "cluster": "other", "side": "NO", "bid_price": 0.45, "size_shares": 100, "active_order_notional_pair": 95},
+        ]
+    )
+    target_status = {"capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200.0}]}
+    result = evaluate_capital_risk_stress(
+        quotes,
+        target_status=target_status,
+        cfg=CapitalRiskStressConfig(max_capture_needed_after_cap_loss=0.40),
+    )
+    assert result["metrics"]["capture_needed_after_cap_loss"] > 0.40
+    assert not result["gates"]["capture_needed_after_cap_loss_gate_passed"]
     assert not result["gates"]["capital_risk_stress_passed"]
 
 
@@ -2268,6 +2289,51 @@ def test_candidate_leaderboard_does_not_promote_under_minimum_rows_over_mature_s
     assert result["leader"]["name"] == "mature_enough_rows"
     assert not result["candidates"][1]["quote_rows_gate_passed"]
     assert result["candidates"][0]["quote_rows_gate_passed"]
+
+
+def test_candidate_leaderboard_uses_provisional_sample_hours_before_short_scout() -> None:
+    def gate_doc(name: str, income: float, hours: float) -> CandidateEvidence:
+        return CandidateEvidence(
+            name,
+            {
+                "status": "depth_not_ready",
+                "config": {"target_monthly_usdc": 1000, "min_observation_hours": 6.0},
+                "metrics": {
+                    "duration_hours": hours,
+                    "quote_rows": 40,
+                    "unique_markets_quoted": 5,
+                    "income_p05_at_required_capture": income,
+                    "required_capture_rate": 0.5,
+                    "taker_rescue_feasible_rate": 1,
+                    "taker_size_weighted_rescue_fraction": 1,
+                    "latest_taker_residual_loss_to_zero": 0,
+                    "latest_taker_residual_loss_fraction": 0,
+                },
+                "gates": {
+                    "depth_ready": False,
+                    "income_p05_gate_passed": True,
+                    "clob_quality_gate_passed": True,
+                    "taker_rescue_rate_gate_passed": True,
+                    "taker_pair_edge_gate_passed": True,
+                    "taker_depth_gate_passed": True,
+                    "taker_residual_loss_gate_passed": True,
+                    "sample_hours_gate_passed": False,
+                    "quote_rows_gate_passed": True,
+                    "book_scenario_gate_passed": True,
+                    "diversification_gate_passed": True,
+                },
+            },
+        )
+
+    result = build_candidate_leaderboard(
+        [
+            gate_doc("short_high_income_scout", 1800, 0.5),
+            gate_doc("provisional_mature_leader", 1650, 1.6),
+        ]
+    )
+    assert result["leader"]["name"] == "provisional_mature_leader"
+    assert result["leader"]["provisional_sample_hours_gate_passed"]
+    assert not result["candidates"][1]["provisional_sample_hours_gate_passed"]
 
 
 def test_refresh_candidate_leaderboard_parses_named_paths_safely() -> None:

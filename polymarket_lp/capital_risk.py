@@ -29,6 +29,9 @@ class CapitalRiskStressConfig:
     max_single_cluster_active_fraction: float = 0.70
     max_single_market_unhedged_loss_fraction: float = 0.20
     max_single_cluster_unhedged_loss_fraction: float = 0.50
+    target_monthly_usdc: float = 1_000.0
+    reference_capture_rate: float = 0.50
+    max_capture_needed_after_cap_loss: float = 0.40
     exit_slippage: float = 0.005
     days_per_month: float = 30.0
 
@@ -128,6 +131,22 @@ def evaluate_capital_risk_stress(
     daily_p05 = monthly_p05 / cfg.days_per_month if monthly_p05 > 0 and cfg.days_per_month > 0 else math.nan
     unhedged_recovery_days = unhedged_loss / daily_p05 if daily_p05 and math.isfinite(daily_p05) else math.inf
     capped_recovery_days = capped_loss / daily_p05 if daily_p05 and math.isfinite(daily_p05) else math.inf
+    capture_needed_for_target = _capture_needed(
+        cfg.target_monthly_usdc,
+        monthly_p05,
+        cfg.reference_capture_rate,
+    )
+    capture_needed_after_cap_loss = _capture_needed(
+        cfg.target_monthly_usdc + capped_loss,
+        monthly_p05,
+        cfg.reference_capture_rate,
+    )
+    monthly_after_cap_loss = monthly_p05 - capped_loss
+    after_cap_loss_income_buffer = (
+        monthly_after_cap_loss / cfg.target_monthly_usdc - 1.0
+        if cfg.target_monthly_usdc > 0 and math.isfinite(monthly_after_cap_loss)
+        else math.nan
+    )
     min_pair_edge = float(market["locked_pair_edge_usdc"].min()) if len(market) else math.nan
     max_pair_cost = float(market["pair_cost_per_share"].max()) if len(market) else math.nan
 
@@ -160,6 +179,12 @@ def evaluate_capital_risk_stress(
         "configured_inventory_cap_loss_fraction": capped_loss / cfg.initial_capital if cfg.initial_capital > 0 else math.inf,
         "immediate_exit_slippage_loss_if_caps_reject": immediate_exit_loss,
         "captured_p05_monthly_income_usdc": monthly_p05,
+        "reference_capture_rate": cfg.reference_capture_rate,
+        "target_monthly_usdc": cfg.target_monthly_usdc,
+        "reference_capture_p05_monthly_after_cap_loss": monthly_after_cap_loss,
+        "capture_needed_for_target": capture_needed_for_target,
+        "capture_needed_after_cap_loss": capture_needed_after_cap_loss,
+        "after_cap_loss_income_buffer_at_reference_capture": after_cap_loss_income_buffer,
         "unhedged_recovery_days_at_p05_income": unhedged_recovery_days,
         "capped_recovery_days_at_p05_income": capped_recovery_days,
         "max_pair_cost_per_share": max_pair_cost,
@@ -180,6 +205,8 @@ def evaluate_capital_risk_stress(
         "unhedged_loss_gate_passed": metrics["unhedged_loss_fraction_of_capital"] <= cfg.max_unhedged_loss_fraction,
         "configured_cap_loss_gate_passed": metrics["configured_inventory_cap_loss_fraction"] <= cfg.max_capped_loss_fraction,
         "configured_cap_recovery_gate_passed": capped_recovery_days <= cfg.max_capped_recovery_days,
+        "capture_needed_after_cap_loss_gate_passed": capture_needed_after_cap_loss
+        <= cfg.max_capture_needed_after_cap_loss,
         "pair_lock_edge_gate_passed": min_pair_edge >= -1e-9 and max_pair_cost <= 1.0 + 1e-9,
     }
     gates["capital_risk_stress_passed"] = bool(all(gates.values()))
@@ -251,6 +278,9 @@ def _blockers(gates: dict[str, bool], cfg: CapitalRiskStressConfig) -> list[str]
         "unhedged_loss_gate_passed": f"unhedged one-side fill loss exceeds {cfg.max_unhedged_loss_fraction:.0%} of capital",
         "configured_cap_loss_gate_passed": f"configured inventory-cap loss exceeds {cfg.max_capped_loss_fraction:.0%} of capital",
         "configured_cap_recovery_gate_passed": f"configured-cap recovery exceeds {cfg.max_capped_recovery_days:.1f} days",
+        "capture_needed_after_cap_loss_gate_passed": (
+            f"capture needed after configured-cap loss exceeds {cfg.max_capture_needed_after_cap_loss:.0%}"
+        ),
         "pair_lock_edge_gate_passed": "two-sided pair fill is not locked non-negative",
     }
     return [message for gate, message in names.items() if not gates.get(gate, False)]
@@ -271,6 +301,18 @@ def _float(value: Any, default: float = math.nan) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _capture_needed(target_income: float, income_at_reference_capture: float, reference_capture: float) -> float:
+    if not (
+        math.isfinite(target_income)
+        and math.isfinite(income_at_reference_capture)
+        and math.isfinite(reference_capture)
+    ):
+        return math.inf
+    if income_at_reference_capture <= 0 or reference_capture <= 0:
+        return math.inf
+    return reference_capture * target_income / income_at_reference_capture
 
 
 _SAFETY = "capital stress audit only; no private keys, order signing, order submission, or cancellation"

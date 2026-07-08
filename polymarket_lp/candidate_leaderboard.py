@@ -101,6 +101,7 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         "taker_residual_loss_gate_passed",
     ]
     sample_gates = ["sample_hours_gate_passed", "quote_rows_gate_passed", "book_scenario_gate_passed"]
+    sample_maturity_fraction, provisional_sample_hours_gate = _sample_maturity(metrics, gate_config)
     row = {
         "name": candidate.name,
         "status": str(gate.get("status", "unknown")),
@@ -112,6 +113,8 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         "quote_rows_gate_passed": bool(gates.get("quote_rows_gate_passed", False)),
         "book_scenario_gate_passed": bool(gates.get("book_scenario_gate_passed", False)),
         "diversification_gate_passed": bool(gates.get("diversification_gate_passed", False)),
+        "sample_maturity_fraction": sample_maturity_fraction,
+        "provisional_sample_hours_gate_passed": provisional_sample_hours_gate,
         "has_drawdown_guard": has_drawdown_guard,
         "drawdown_guard_status": str(drawdown.get("status", "not_evaluated")),
         "drawdown_core_passed": drawdown_core_passed,
@@ -235,6 +238,7 @@ def _rank_key(row: dict[str, Any]) -> tuple[float, ...]:
         float(bool(row.get("drawdown_core_passed", True))),
         float(bool(row.get("capital_core_passed", True))),
         float(bool(row.get("sample_gates_passed"))),
+        float(bool(row.get("provisional_sample_hours_gate_passed"))),
         float(bool(row.get("quote_rows_gate_passed"))),
         float(bool(row.get("book_scenario_gate_passed"))),
         float(bool(row.get("diversification_gate_passed"))),
@@ -348,6 +352,8 @@ def _leader_summary(row: dict[str, Any]) -> dict[str, Any]:
         "quote_rows_gate_passed": row.get("quote_rows_gate_passed"),
         "book_scenario_gate_passed": row.get("book_scenario_gate_passed"),
         "diversification_gate_passed": row.get("diversification_gate_passed"),
+        "sample_maturity_fraction": row.get("sample_maturity_fraction"),
+        "provisional_sample_hours_gate_passed": row.get("provisional_sample_hours_gate_passed"),
         "latest_taker_residual_loss_to_zero": row.get("latest_taker_residual_loss_to_zero"),
         "latest_taker_residual_loss_fraction": row.get("latest_taker_residual_loss_fraction"),
         "configured_quote_size_shares": row.get("configured_quote_size_shares"),
@@ -455,6 +461,15 @@ def _risk_bucket(value: Any, *, decimals: int, default: float) -> float:
 
     value = _finite(value, default)
     return round(value, decimals) if math.isfinite(value) else default
+
+
+def _sample_maturity(metrics: dict[str, Any], gate_config: dict[str, Any]) -> tuple[float, bool]:
+    duration = _float(metrics.get("duration_hours"), 0.0)
+    required = _float(gate_config.get("min_observation_hours"), math.nan)
+    if not math.isfinite(required) or required <= 0:
+        return math.inf, True
+    maturity = max(0.0, min(1.0, duration / required))
+    return maturity, maturity >= 0.25
 
 
 def _capture_needed(target_income: float, income_at_required_capture: float, required_capture: float) -> float:

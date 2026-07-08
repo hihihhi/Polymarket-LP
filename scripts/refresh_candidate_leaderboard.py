@@ -77,6 +77,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-single-cluster-active-fraction", type=float, default=0.70)
     p.add_argument("--max-single-market-unhedged-loss-fraction", type=float, default=0.20)
     p.add_argument("--max-single-cluster-unhedged-loss-fraction", type=float, default=0.50)
+    p.add_argument("--max-capture-needed-after-cap-loss", type=float, default=0.40)
     p.add_argument("--exit-slippage", type=float, default=0.005)
     return p.parse_args()
 
@@ -291,6 +292,9 @@ def evaluate_candidate_capital(
             max_single_cluster_active_fraction=args.max_single_cluster_active_fraction,
             max_single_market_unhedged_loss_fraction=args.max_single_market_unhedged_loss_fraction,
             max_single_cluster_unhedged_loss_fraction=args.max_single_cluster_unhedged_loss_fraction,
+            target_monthly_usdc=args.target_monthly,
+            reference_capture_rate=args.required_capture_rate,
+            max_capture_needed_after_cap_loss=args.max_capture_needed_after_cap_loss,
             exit_slippage=args.exit_slippage,
         ),
     )
