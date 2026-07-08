@@ -68,6 +68,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-total-unpaired-grid", default=str(LPConfig().max_total_unpaired))
     p.add_argument("--max-cluster-unpaired-grid", default=str(LPConfig().max_cluster_unpaired))
     p.add_argument("--max-unpaired-minutes-grid", default=str(LPConfig().max_unpaired_minutes))
+    p.add_argument("--depth-cap-quote-size-grid", default="0", help="Comma grid of 0/1; 1 caps quotes by displayed opposite-side ask depth before reward scoring")
+    p.add_argument("--depth-quote-size-fraction-grid", default="1.0", help="Comma grid for displayed-depth fraction when depth cap is enabled")
+    p.add_argument("--min-depth-capped-quote-size", type=float, default=1.0)
     p.add_argument("--excluded-categories", default="sports,crypto")
     p.add_argument("--max-recent-vol", type=float, default=0.006)
     p.add_argument("--max-recent-jump", type=float, default=0.025)
@@ -133,8 +136,19 @@ def main() -> None:
     )
 
     candidates: list[dict[str, Any]] = []
-    quote_by_key: dict[tuple[float, float, float, float, float, float, float, float], pd.DataFrame] = {}
-    for quote_size, residual_cap, offset, density, max_unpaired_market, max_total_unpaired, max_cluster_unpaired, max_unpaired_minutes in product(
+    quote_by_key: dict[tuple[float, float, float, float, float, float, float, float, bool, float], pd.DataFrame] = {}
+    for (
+        quote_size,
+        residual_cap,
+        offset,
+        density,
+        max_unpaired_market,
+        max_total_unpaired,
+        max_cluster_unpaired,
+        max_unpaired_minutes,
+        depth_cap_quote_size,
+        depth_quote_size_fraction,
+    ) in product(
         _float_grid(args.quote_size_grid),
         _float_grid(args.residual_loss_grid),
         _float_grid(args.offset_grid),
@@ -143,6 +157,8 @@ def main() -> None:
         _float_grid(args.max_total_unpaired_grid),
         _float_grid(args.max_cluster_unpaired_grid),
         _float_grid(args.max_unpaired_minutes_grid),
+        _bool_grid(args.depth_cap_quote_size_grid),
+        _float_grid(args.depth_quote_size_fraction_grid),
     ):
         cfg = LPConfig(
             quote_size_shares=quote_size,
@@ -158,6 +174,9 @@ def main() -> None:
             max_recent_vol=args.max_recent_vol,
             max_recent_jump=args.max_recent_jump,
             vol_quote_multiplier=args.vol_quote_multiplier,
+            depth_cap_quote_size=depth_cap_quote_size,
+            depth_quote_size_fraction=depth_quote_size_fraction,
+            min_depth_capped_quote_size_shares=args.min_depth_capped_quote_size,
             partial_rescue_max_residual_loss_usdc=residual_cap,
         )
         quotes = build_paper_quotes(snapshots, cfg)
@@ -240,6 +259,8 @@ def main() -> None:
             max_total_unpaired=max_total_unpaired,
             max_cluster_unpaired=max_cluster_unpaired,
             max_unpaired_minutes=max_unpaired_minutes,
+            depth_cap_quote_size=depth_cap_quote_size,
+            depth_quote_size_fraction=depth_quote_size_fraction,
             target_status=target_status,
             rescue=rescue,
             depth=depth,
@@ -257,6 +278,8 @@ def main() -> None:
                 max_total_unpaired,
                 max_cluster_unpaired,
                 max_unpaired_minutes,
+                depth_cap_quote_size,
+                depth_quote_size_fraction,
             )
         ] = quotes
 
@@ -293,6 +316,9 @@ def main() -> None:
             "max_total_unpaired_grid": _float_grid(args.max_total_unpaired_grid),
             "max_cluster_unpaired_grid": _float_grid(args.max_cluster_unpaired_grid),
             "max_unpaired_minutes_grid": _float_grid(args.max_unpaired_minutes_grid),
+            "depth_cap_quote_size_grid": _bool_grid(args.depth_cap_quote_size_grid),
+            "depth_quote_size_fraction_grid": _float_grid(args.depth_quote_size_fraction_grid),
+            "min_depth_capped_quote_size": args.min_depth_capped_quote_size,
             "active_capital_limit": args.active_capital_limit,
             "excluded_categories": args.excluded_categories,
             "max_recent_vol": args.max_recent_vol,
@@ -313,6 +339,8 @@ def main() -> None:
             float(selected["max_total_unpaired"]),
             float(selected["max_cluster_unpaired"]),
             float(selected["max_unpaired_minutes"]),
+            bool(selected["depth_cap_quote_size"]),
+            float(selected["depth_quote_size_fraction"]),
         )
         selected_quotes = Path(args.selected_quotes) if args.selected_quotes else out / "selected_quotes.csv"
         selected_quotes.parent.mkdir(parents=True, exist_ok=True)
@@ -380,6 +408,8 @@ def _candidate_row(
     max_total_unpaired: float,
     max_cluster_unpaired: float,
     max_unpaired_minutes: float,
+    depth_cap_quote_size: bool,
+    depth_quote_size_fraction: float,
     target_status: dict[str, Any],
     rescue: dict[str, Any],
     depth: dict[str, Any],
@@ -422,6 +452,8 @@ def _candidate_row(
         "max_total_unpaired": max_total_unpaired,
         "max_cluster_unpaired": max_cluster_unpaired,
         "max_unpaired_minutes": max_unpaired_minutes,
+        "depth_cap_quote_size": bool(depth_cap_quote_size),
+        "depth_quote_size_fraction": depth_quote_size_fraction,
         "quote_rows": int(_float(paper.get("quote_rows"), 0.0)),
         "quote_pair_intervals": int(_float(paper.get("quote_pair_intervals"), 0.0)),
         "unique_markets_quoted": int(_float(paper.get("unique_markets_quoted"), 0.0)),
@@ -490,6 +522,21 @@ def _selection_status(selected: dict[str, Any]) -> str:
 
 def _float_grid(text: str) -> list[float]:
     return [float(part.strip()) for part in str(text).split(",") if part.strip()]
+
+
+def _bool_grid(text: str) -> list[bool]:
+    values: list[bool] = []
+    for part in str(text).split(","):
+        token = part.strip().lower()
+        if not token:
+            continue
+        if token in {"1", "true", "t", "yes", "y", "on"}:
+            values.append(True)
+        elif token in {"0", "false", "f", "no", "n", "off"}:
+            values.append(False)
+        else:
+            raise SystemExit(f"invalid boolean grid token for --depth-cap-quote-size-grid: {part!r}")
+    return values
 
 
 def _dict(value: Any) -> dict[str, Any]:

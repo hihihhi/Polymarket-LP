@@ -2518,6 +2518,9 @@ def test_launch_live_paper_candidate_generates_parameterized_public_scripts(tmp_
         max_total_unpaired=300,
         max_cluster_unpaired=160,
         max_unpaired_minutes=20,
+        depth_cap_quote_size=True,
+        depth_quote_size_fraction=0.8,
+        min_depth_capped_quote_size=5,
         iterations=2,
         extension_iterations=3,
         interval_seconds=60,
@@ -2527,7 +2530,9 @@ def test_launch_live_paper_candidate_generates_parameterized_public_scripts(tmp_
     assert manifest["quote_size"] == 200
     assert manifest["partial_rescue_max_residual_loss_usdc"] == 5
     assert manifest["max_unpaired_per_market"] == 40
+    assert manifest["depth_cap_quote_size"] is True
     assert manifest["lp_config"]["max_total_unpaired"] == 300
+    assert manifest["lp_config"]["depth_quote_size_fraction"] == 0.8
     assert manifest["safety"].startswith("public CLOB/Gamma reads only")
     collector = tmp_path.joinpath("unit_run", "run_q200_cap5_d006_collector.ps1").read_text(encoding="utf-8")
     watcher = tmp_path.joinpath("unit_run", "run_q200_cap5_d006_watcher.ps1").read_text(encoding="utf-8")
@@ -2538,6 +2543,9 @@ def test_launch_live_paper_candidate_generates_parameterized_public_scripts(tmp_
     assert "--max-total-unpaired 300" in collector
     assert "--max-cluster-unpaired 160" in collector
     assert "--max-unpaired-minutes 20" in collector
+    assert "--depth-cap-quote-size" in collector
+    assert "--depth-quote-size-fraction 0.8" in collector
+    assert "--min-depth-capped-quote-size 5" in collector
     assert "--min-reward-density-per-day 0.06" in collector
     assert "--min-observation-hours 6" in watcher
     assert "--min-unique-markets 4" in watcher
@@ -2560,6 +2568,9 @@ def test_lp_config_from_manifest_maps_candidate_risk_parameters() -> None:
             "max_recent_vol": 0.006,
             "max_recent_jump": 0.025,
             "vol_quote_multiplier": 0.5,
+            "depth_cap_quote_size": True,
+            "depth_quote_size_fraction": 0.75,
+            "min_depth_capped_quote_size_shares": 6,
         }
     )
     assert cfg.quote_size_shares == 200
@@ -2570,6 +2581,9 @@ def test_lp_config_from_manifest_maps_candidate_risk_parameters() -> None:
     assert cfg.max_total_unpaired == 300
     assert cfg.max_cluster_unpaired == 160
     assert cfg.max_unpaired_minutes == 20
+    assert cfg.depth_cap_quote_size is True
+    assert cfg.depth_quote_size_fraction == 0.75
+    assert cfg.min_depth_capped_quote_size_shares == 6
 
 
 def test_paper_replay_config_exposes_inventory_caps() -> None:

@@ -62,6 +62,12 @@ def lp_config_from_manifest(manifest: dict[str, Any], base: LPConfig | None = No
         "max_recent_vol": _num(merged.get("max_recent_vol"), cfg.max_recent_vol),
         "max_recent_jump": _num(merged.get("max_recent_jump"), cfg.max_recent_jump),
         "vol_quote_multiplier": _num(merged.get("vol_quote_multiplier"), cfg.vol_quote_multiplier),
+        "depth_cap_quote_size": bool(merged.get("depth_cap_quote_size", cfg.depth_cap_quote_size)),
+        "depth_quote_size_fraction": _num(merged.get("depth_quote_size_fraction"), cfg.depth_quote_size_fraction),
+        "min_depth_capped_quote_size_shares": _num(
+            merged.get("min_depth_capped_quote_size_shares", merged.get("min_depth_capped_quote_size")),
+            cfg.min_depth_capped_quote_size_shares,
+        ),
         "partial_rescue_max_residual_loss_usdc": residual_cap if math.isfinite(residual_cap) else _infer_text_number(text, r"(?:^|[^a-z0-9])cap(\d+(?:\.\d+)?)", cfg.partial_rescue_max_residual_loss_usdc),
     }
     return LPConfig(**{**asdict(cfg), **values})

@@ -41,6 +41,9 @@ class LaunchCandidateConfig:
     max_recent_vol: float = 0.006
     max_recent_jump: float = 0.025
     vol_quote_multiplier: float = 0.5
+    depth_cap_quote_size: bool = False
+    depth_quote_size_fraction: float = 1.0
+    min_depth_capped_quote_size: float = 1.0
     iterations: int = 37
     extension_iterations: int = 108
     interval_seconds: int = 600
@@ -93,6 +96,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-recent-vol", type=float, default=0.006)
     p.add_argument("--max-recent-jump", type=float, default=0.025)
     p.add_argument("--vol-quote-multiplier", type=float, default=0.5)
+    p.add_argument("--depth-cap-quote-size", action="store_true")
+    p.add_argument("--depth-quote-size-fraction", type=float, default=1.0)
+    p.add_argument("--min-depth-capped-quote-size", type=float, default=1.0)
     p.add_argument("--iterations", type=int, default=37)
     p.add_argument("--extension-iterations", type=int, default=108)
     p.add_argument("--interval-seconds", type=int, default=600)
@@ -129,6 +135,9 @@ def main() -> None:
         max_recent_vol=ns.max_recent_vol,
         max_recent_jump=ns.max_recent_jump,
         vol_quote_multiplier=ns.vol_quote_multiplier,
+        depth_cap_quote_size=ns.depth_cap_quote_size,
+        depth_quote_size_fraction=ns.depth_quote_size_fraction,
+        min_depth_capped_quote_size=ns.min_depth_capped_quote_size,
         iterations=ns.iterations,
         extension_iterations=ns.extension_iterations,
         interval_seconds=ns.interval_seconds,
@@ -194,6 +203,9 @@ def write_launch_artifacts(
         "max_total_unpaired": cfg.max_total_unpaired,
         "max_cluster_unpaired": cfg.max_cluster_unpaired,
         "max_unpaired_minutes": cfg.max_unpaired_minutes,
+        "depth_cap_quote_size": cfg.depth_cap_quote_size,
+        "depth_quote_size_fraction": cfg.depth_quote_size_fraction,
+        "min_depth_capped_quote_size": cfg.min_depth_capped_quote_size,
         "lp_config": {
             "initial_capital": cfg.initial_capital,
             "quote_size_shares": cfg.quote_size,
@@ -209,6 +221,9 @@ def write_launch_artifacts(
             "max_recent_vol": cfg.max_recent_vol,
             "max_recent_jump": cfg.max_recent_jump,
             "vol_quote_multiplier": cfg.vol_quote_multiplier,
+            "depth_cap_quote_size": cfg.depth_cap_quote_size,
+            "depth_quote_size_fraction": cfg.depth_quote_size_fraction,
+            "min_depth_capped_quote_size_shares": cfg.min_depth_capped_quote_size,
             "partial_rescue_max_residual_loss_usdc": cfg.partial_rescue_max_residual_loss_usdc,
         },
         "snapshot": str(paths["snapshot"]),
@@ -284,7 +299,8 @@ def _collector_script(cfg: LaunchCandidateConfig, p: dict[str, Path]) -> str:
                 "--active-capital-limit {active_cap} --excluded-categories {excluded} "
                 "--min-reward-density-per-day {density} --recent-vol-window 6 "
                 "--max-recent-vol {max_vol} --max-recent-jump {max_jump} "
-                "--vol-quote-multiplier {vol_mult} --partial-rescue-max-residual-loss-usdc {residual} "
+                "--vol-quote-multiplier {vol_mult} {depth_flags} "
+                "--partial-rescue-max-residual-loss-usdc {residual} "
                 ">> $Log 2>&1"
             ).format(
                 iterations=cfg.iterations,
@@ -309,6 +325,7 @@ def _collector_script(cfg: LaunchCandidateConfig, p: dict[str, Path]) -> str:
                 max_vol=cfg.max_recent_vol,
                 max_jump=cfg.max_recent_jump,
                 vol_mult=cfg.vol_quote_multiplier,
+                depth_flags=_depth_flags(cfg),
                 residual=cfg.partial_rescue_max_residual_loss_usdc,
             ),
             "Pop-Location",
@@ -392,7 +409,8 @@ def _extend24_script(
                 "--active-capital-limit {active_cap} --excluded-categories {excluded} "
                 "--min-reward-density-per-day {density} --recent-vol-window 6 "
                 "--max-recent-vol {max_vol} --max-recent-jump {max_jump} "
-                "--vol-quote-multiplier {vol_mult} --partial-rescue-max-residual-loss-usdc {residual} "
+                "--vol-quote-multiplier {vol_mult} {depth_flags} "
+                "--partial-rescue-max-residual-loss-usdc {residual} "
                 ">> $Extend24Log 2>&1"
             ).format(
                 iterations=cfg.extension_iterations,
@@ -417,6 +435,7 @@ def _extend24_script(
                 max_vol=cfg.max_recent_vol,
                 max_jump=cfg.max_recent_jump,
                 vol_mult=cfg.vol_quote_multiplier,
+                depth_flags=_depth_flags(cfg),
                 residual=cfg.partial_rescue_max_residual_loss_usdc,
             ),
             'Add-Log "extension_collector_exit code=$LASTEXITCODE"; Add-Log "after24_audit_start"',
@@ -461,6 +480,15 @@ def _vars(cfg: LaunchCandidateConfig, p: dict[str, Path]) -> str:
     lines = [f"${key}={_ps_quote(value)}" for key, value in pairs.items()]
     lines.append(f"$IntervalSeconds={int(cfg.interval_seconds)}")
     return "; ".join(lines)
+
+
+def _depth_flags(cfg: LaunchCandidateConfig) -> str:
+    if not cfg.depth_cap_quote_size:
+        return ""
+    return (
+        f"--depth-cap-quote-size --depth-quote-size-fraction {cfg.depth_quote_size_fraction} "
+        f"--min-depth-capped-quote-size {cfg.min_depth_capped_quote_size}"
+    )
 
 
 def _update_target_command(
