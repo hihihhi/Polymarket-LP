@@ -106,15 +106,19 @@ def _markdown(payload: dict[str, Any]) -> str:
         "",
         f"Status: `{payload['status']}`",
         "",
-        "| Candidate | Status | Hours | PnL | MTM MDD | Realized MDD | Max inventory | Max active | Reward/loss | Blockers |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
+        "| Candidate | Status | Quote | Active cap | Rescue cap | Hours | PnL | MTM MDD | Realized MDD | Max inventory | Max active | Reward/loss | Blockers |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in payload.get("candidates", []):
         m = row.get("metrics", {})
+        lp_cfg = row.get("lp_config", {})
         lines.append(
-            "| {name} | {status} | {hours} | {pnl} | {mdd} | {real_dd} | {inv} | {active} | {rl} | {blockers} |".format(
+            "| {name} | {status} | {quote} | {active_cap} | {rescue_cap} | {hours} | {pnl} | {mdd} | {real_dd} | {inv} | {active} | {rl} | {blockers} |".format(
                 name=row.get("name", ""),
                 status=row.get("status", ""),
+                quote=_shares(lp_cfg.get("quote_size_shares")),
+                active_cap=_money(lp_cfg.get("active_capital_limit")),
+                rescue_cap=_money(lp_cfg.get("partial_rescue_max_residual_loss_usdc")),
                 hours=_num(m.get("duration_hours")),
                 pnl=_money(m.get("total_pnl_usdc")),
                 mdd=_pct(m.get("max_drawdown_mtm_fraction")),
@@ -196,6 +200,14 @@ def _pct(value: Any) -> str:
     except (TypeError, ValueError):
         return "n/a"
     return f"{100 * x:.2f}%" if math.isfinite(x) else "n/a"
+
+
+def _shares(value: Any) -> str:
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+    return f"{x:,.0f}" if math.isfinite(x) else "n/a"
 
 
 if __name__ == "__main__":

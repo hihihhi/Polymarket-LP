@@ -1999,6 +1999,70 @@ def test_candidate_leaderboard_demotes_drawdown_core_failures() -> None:
     assert result["policy_leaders"]["risk_first_leader"]["name"] == "lower_income_good_dd"
 
 
+def test_candidate_leaderboard_exposes_and_prefers_lower_inventory_pressure() -> None:
+    def gate(income: float) -> dict[str, object]:
+        return {
+            "status": "depth_not_ready",
+            "metrics": {
+                "duration_hours": 1,
+                "quote_rows": 40,
+                "unique_markets_quoted": 4,
+                "income_p05_at_required_capture": income,
+                "taker_rescue_feasible_rate": 1,
+                "taker_size_weighted_rescue_fraction": 1,
+                "latest_taker_residual_loss_to_zero": 0,
+                "latest_taker_residual_loss_fraction": 0,
+            },
+            "gates": {
+                "depth_ready": False,
+                "income_p05_gate_passed": True,
+                "clob_quality_gate_passed": True,
+                "taker_rescue_rate_gate_passed": True,
+                "taker_pair_edge_gate_passed": True,
+                "taker_depth_gate_passed": True,
+                "taker_residual_loss_gate_passed": True,
+                "sample_hours_gate_passed": False,
+                "quote_rows_gate_passed": True,
+                "book_scenario_gate_passed": True,
+            },
+        }
+
+    def drawdown(active_fraction: float) -> dict[str, object]:
+        return {
+            "status": "drawdown_guard_sample_pending",
+            "risk_core_passed": True,
+            "gates": {"sample_hours_gate_passed": False, "drawdown_guard_passed": False},
+            "lp_config": {
+                "quote_size_shares": 200,
+                "active_capital_limit": 1200,
+                "partial_rescue_max_residual_loss_usdc": 0.5,
+                "max_total_unpaired": 450,
+            },
+            "metrics": {
+                "reward_to_trading_loss_ratio": 10,
+                "max_drawdown_mtm_fraction": 0.0,
+                "max_open_inventory_notional": 0.0,
+                "max_open_inventory_fraction": 0.0,
+                "max_active_order_notional": 2000 * active_fraction,
+                "max_active_order_fraction": active_fraction,
+            },
+            "blockers": ["needs sample"],
+        }
+
+    result = build_candidate_leaderboard(
+        [
+            CandidateEvidence("higher_income_higher_active", gate(1800), drawdown_guard=drawdown(0.60)),
+            CandidateEvidence("lower_active", gate(1500), drawdown_guard=drawdown(0.40)),
+        ]
+    )
+    assert result["leader"]["name"] == "lower_active"
+    assert result["leader"]["configured_quote_size_shares"] == 200
+    assert result["leader"]["configured_active_capital_limit"] == 1200
+    assert result["leader"]["configured_residual_loss_cap_usdc"] == 0.5
+    assert result["leader"]["configured_max_total_unpaired"] == 450
+    assert result["leader"]["drawdown_max_active_order_fraction"] == 0.40
+
+
 def test_refresh_candidate_leaderboard_parses_named_paths_safely() -> None:
     assert _split_named_path("q300=C:/tmp/bg.json", "--candidate") == ("q300", "C:/tmp/bg.json")
     assert _safe_name("q300/cap10 d0.06") == "q300_cap10_d0.06"

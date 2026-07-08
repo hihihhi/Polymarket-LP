@@ -322,8 +322,8 @@ def _markdown(result: dict[str, Any]) -> str:
         f"Status: `{result['status']}`",
         f"Leader policy: `{result.get('leader_policy', 'n/a')}`",
         "",
-        "| Rank | Candidate | Status | p05/mo @ capture | Hours | Rows | Markets | Rescue feasible | Residual loss | DD guard | DD reward/loss | Note |",
-        "|---:|---|---|---:|---:|---:|---:|---:|---|---:|---:|---|",
+        "| Rank | Candidate | Status | p05/mo @ capture | Quote | Active cap | Rescue cap | Hours | Rows | Markets | Rescue feasible | Residual loss | Max inv | Max active | DD guard | DD reward/loss | Note |",
+        "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|",
     ]
     for idx, row in enumerate(result.get("candidates", []), start=1):
         lines.append(
@@ -334,11 +334,16 @@ def _markdown(result: dict[str, Any]) -> str:
                     str(row.get("name", "")),
                     str(row.get("status", "")),
                     _money(row.get("income_p05_at_required_capture")),
+                    _shares(row.get("configured_quote_size_shares")),
+                    _money(row.get("configured_active_capital_limit")),
+                    _money(row.get("configured_residual_loss_cap_usdc")),
                     _num(row.get("duration_hours"), 2),
                     str(row.get("quote_rows", 0)),
                     str(row.get("unique_markets_quoted", 0)),
                     _pct(row.get("taker_rescue_feasible_rate")),
                     _money(row.get("latest_taker_residual_loss_to_zero")),
+                    _pct(row.get("drawdown_max_open_inventory_fraction")),
+                    _pct(row.get("drawdown_max_active_order_fraction")),
                     str(row.get("drawdown_guard_status", "not_evaluated")),
                     _num(row.get("drawdown_reward_to_trading_loss_ratio"), 2),
                     str(row.get("ranking_note", "")),
@@ -359,7 +364,9 @@ def _markdown(result: dict[str, Any]) -> str:
             if isinstance(item, dict) and item:
                 lines.append(
                     f"- {label}: `{item.get('name')}`; p05/mo {_money(item.get('income_p05_at_required_capture'))}; "
-                    f"hours {_num(item.get('duration_hours'), 2)}; residual {_money(item.get('latest_taker_residual_loss_to_zero'))}; "
+                    f"quote {_shares(item.get('configured_quote_size_shares'))}; active cap {_money(item.get('configured_active_capital_limit'))}; "
+                    f"rescue cap {_money(item.get('configured_residual_loss_cap_usdc'))}; hours {_num(item.get('duration_hours'), 2)}; "
+                    f"residual {_money(item.get('latest_taker_residual_loss_to_zero'))}; "
                     f"drawdown guard {item.get('drawdown_guard_status')}."
                 )
         if policy.get("note"):
@@ -390,6 +397,14 @@ def _num(value: object, digits: int) -> str:
         if math.isinf(x):
             return "inf" if x > 0 else "-inf"
         return "n/a" if not math.isfinite(x) else f"{x:.{digits}f}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _shares(value: object) -> str:
+    try:
+        x = float(value)
+        return "n/a" if not math.isfinite(x) else f"{x:,.0f}"
     except (TypeError, ValueError):
         return "n/a"
 

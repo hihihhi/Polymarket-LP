@@ -44,6 +44,7 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
     gates = _dict(gate.get("gates"))
     drawdown_metrics = _dict(drawdown.get("metrics"))
     drawdown_gates = _dict(drawdown.get("gates"))
+    lp_config = _dict(drawdown.get("lp_config"))
     blockers = gate.get("blockers") if isinstance(gate.get("blockers"), list) else []
     drawdown_blockers = drawdown.get("blockers") if isinstance(drawdown.get("blockers"), list) else []
     metadata = _dict(candidate.metadata)
@@ -85,9 +86,28 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         "taker_size_weighted_rescue_fraction": _float(metrics.get("taker_size_weighted_rescue_fraction"), math.nan),
         "latest_taker_residual_loss_to_zero": _float(metrics.get("latest_taker_residual_loss_to_zero"), math.nan),
         "latest_taker_residual_loss_fraction": _float(metrics.get("latest_taker_residual_loss_fraction"), math.nan),
+        "configured_quote_size_shares": _first_float(
+            metadata.get("quote_size"),
+            metadata.get("quote_size_shares"),
+            lp_config.get("quote_size_shares"),
+        ),
+        "configured_active_capital_limit": _first_float(
+            metadata.get("active_capital_limit"),
+            lp_config.get("active_capital_limit"),
+        ),
+        "configured_residual_loss_cap_usdc": _first_float(
+            metadata.get("partial_rescue_max_residual_loss_usdc"),
+            lp_config.get("partial_rescue_max_residual_loss_usdc"),
+        ),
+        "configured_max_unpaired_per_market": _first_float(lp_config.get("max_unpaired_per_market")),
+        "configured_max_total_unpaired": _first_float(lp_config.get("max_total_unpaired")),
+        "configured_max_cluster_unpaired": _first_float(lp_config.get("max_cluster_unpaired")),
         "drawdown_reward_to_trading_loss_ratio": _float(drawdown_metrics.get("reward_to_trading_loss_ratio"), math.nan),
         "drawdown_mtm_fraction": _float(drawdown_metrics.get("max_drawdown_mtm_fraction"), math.nan),
         "drawdown_realized_fraction": _float(drawdown_metrics.get("max_drawdown_realized_fraction"), math.nan),
+        "drawdown_max_open_inventory_notional": _float(drawdown_metrics.get("max_open_inventory_notional"), math.nan),
+        "drawdown_max_open_inventory_fraction": _float(drawdown_metrics.get("max_open_inventory_fraction"), math.nan),
+        "drawdown_max_active_order_notional": _float(drawdown_metrics.get("max_active_order_notional"), math.nan),
         "drawdown_max_active_order_fraction": _float(drawdown_metrics.get("max_active_order_fraction"), math.nan),
         "blockers": [str(x) for x in blockers],
         "drawdown_blockers": [str(x) for x in drawdown_blockers],
@@ -113,6 +133,8 @@ def _rank_key(row: dict[str, Any]) -> tuple[float, ...]:
     residual_fraction = _risk_bucket(row.get("latest_taker_residual_loss_fraction"), decimals=6, default=math.inf)
     residual_loss = _risk_bucket(row.get("latest_taker_residual_loss_to_zero"), decimals=2, default=math.inf)
     drawdown_mtm = _risk_bucket(row.get("drawdown_mtm_fraction"), decimals=6, default=math.inf)
+    open_inventory = _risk_bucket(row.get("drawdown_max_open_inventory_fraction"), decimals=6, default=math.inf)
+    active_orders = _risk_bucket(row.get("drawdown_max_active_order_fraction"), decimals=6, default=math.inf)
     reward_loss = _finite(row.get("drawdown_reward_to_trading_loss_ratio"), -math.inf)
     return (
         float(bool(row.get("public_paper_depth_ready"))),
@@ -124,6 +146,8 @@ def _rank_key(row: dict[str, Any]) -> tuple[float, ...]:
         -residual_fraction,
         -residual_loss,
         -drawdown_mtm,
+        -open_inventory,
+        -active_orders,
         reward_loss,
         income,
         rescue_rate,
@@ -203,9 +227,15 @@ def _leader_summary(row: dict[str, Any]) -> dict[str, Any]:
         "unique_markets_quoted": row.get("unique_markets_quoted"),
         "latest_taker_residual_loss_to_zero": row.get("latest_taker_residual_loss_to_zero"),
         "latest_taker_residual_loss_fraction": row.get("latest_taker_residual_loss_fraction"),
+        "configured_quote_size_shares": row.get("configured_quote_size_shares"),
+        "configured_active_capital_limit": row.get("configured_active_capital_limit"),
+        "configured_residual_loss_cap_usdc": row.get("configured_residual_loss_cap_usdc"),
+        "configured_max_total_unpaired": row.get("configured_max_total_unpaired"),
         "drawdown_guard_status": row.get("drawdown_guard_status"),
         "drawdown_reward_to_trading_loss_ratio": row.get("drawdown_reward_to_trading_loss_ratio"),
         "drawdown_mtm_fraction": row.get("drawdown_mtm_fraction"),
+        "drawdown_max_open_inventory_fraction": row.get("drawdown_max_open_inventory_fraction"),
+        "drawdown_max_active_order_fraction": row.get("drawdown_max_active_order_fraction"),
         "ranking_note": row.get("ranking_note"),
     }
 
@@ -254,6 +284,14 @@ def _float(value: Any, default: float = math.nan) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _first_float(*values: Any, default: float = math.nan) -> float:
+    for value in values:
+        parsed = _float(value, math.nan)
+        if math.isfinite(parsed):
+            return parsed
+    return default
 
 
 def _finite(value: Any, default: float) -> float:
