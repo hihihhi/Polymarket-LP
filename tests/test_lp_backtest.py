@@ -42,6 +42,7 @@ from polymarket_lp.rescue_stress import RescueStressConfig, evaluate_rescue_stre
 from polymarket_lp.depth_gate import DepthReadinessConfig, evaluate_depth_readiness
 from polymarket_lp.candidate_leaderboard import CandidateEvidence, build_candidate_leaderboard
 from scripts.paper_replay import make_lp_config
+from scripts.launch_live_paper_candidate import LaunchCandidateConfig, write_launch_artifacts
 from scripts.refresh_candidate_leaderboard import _safe_name, _split_named_path
 from scripts.update_target_status import _bootstrap_target_from_quotes, _capture_stress_grid, _json_safe
 from scripts.target_config_grid import SelectionConfig, _candidate_row
@@ -1869,3 +1870,33 @@ def test_refresh_candidate_leaderboard_parses_named_paths_safely() -> None:
     assert _safe_name("q300/cap10 d0.06") == "q300_cap10_d0.06"
     with pytest.raises(SystemExit):
         _split_named_path("missing_equals", "--candidate")
+
+
+def test_launch_live_paper_candidate_generates_parameterized_public_scripts(tmp_path) -> None:
+    cfg = LaunchCandidateConfig(
+        name="q200 cap5 d006",
+        state_dir=str(tmp_path),
+        repo="C:/repo/Polymarket-LP",
+        python="C:/repo/Polymarket-LP/.venv/Scripts/python.exe",
+        quote_size=200,
+        partial_rescue_max_residual_loss_usdc=5,
+        min_reward_density_per_day=0.06,
+        active_capital_limit=1200,
+        iterations=2,
+        extension_iterations=3,
+        interval_seconds=60,
+    )
+    manifest = write_launch_artifacts(cfg, run_id="unit_run", start=False)
+    assert manifest["pid"] == 0
+    assert manifest["quote_size"] == 200
+    assert manifest["partial_rescue_max_residual_loss_usdc"] == 5
+    assert manifest["safety"].startswith("public CLOB/Gamma reads only")
+    collector = tmp_path.joinpath("unit_run", "run_q200_cap5_d006_collector.ps1").read_text(encoding="utf-8")
+    watcher = tmp_path.joinpath("unit_run", "run_q200_cap5_d006_watcher.ps1").read_text(encoding="utf-8")
+    extend = tmp_path.joinpath("unit_run", "run_q200_cap5_d006_extend_to24h_and_audit.ps1").read_text(encoding="utf-8")
+    assert "--quote-size 200" in collector
+    assert "--partial-rescue-max-residual-loss-usdc 5" in collector
+    assert "--min-reward-density-per-day 0.06" in collector
+    assert "--min-observation-hours 6" in watcher
+    assert "--min-observation-hours 24" in extend
+    assert "private" not in collector.lower()
