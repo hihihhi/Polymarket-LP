@@ -98,6 +98,8 @@ def main() -> None:
     for index, item in enumerate(args.candidate):
         name, background_path = _split_named_path(item, "--candidate")
         background = json.loads(Path(background_path).read_text(encoding="utf-8-sig"))
+        background["_input_freshness"] = _input_freshness_metrics(background)
+        background["_max_input_staleness_seconds"] = args.max_input_staleness_seconds
         candidate_dir = work_dir / _safe_name(name)
         try:
             freshness_error = _input_staleness_error(background, args.max_input_staleness_seconds)
@@ -421,24 +423,43 @@ def _input_staleness_error(
 
     if max_staleness_seconds <= 0:
         return ""
-    reference_time = time.time() if now is None else now
+    metrics = _input_freshness_metrics(background, now=now)
     stale: list[str] = []
     missing: list[str] = []
     for key in ("snapshot", "quotes"):
-        raw_path = background.get(key)
-        if not raw_path:
+        item = metrics.get(key, {})
+        if not item.get("path"):
             missing.append(f"{key} path missing")
             continue
-        path = Path(str(raw_path))
-        if not path.exists():
-            missing.append(f"{key} path does not exist: {path}")
+        if not item.get("exists"):
+            missing.append(f"{key} path does not exist: {item.get('path')}")
             continue
-        age = max(0.0, reference_time - path.stat().st_mtime)
+        age = float(item.get("age_seconds", 0.0))
         if age > max_staleness_seconds:
             stale.append(f"{key} age {age:.0f}s > {max_staleness_seconds:.0f}s")
     if missing or stale:
         return "input freshness gate failed: " + "; ".join(missing + stale)
     return ""
+
+
+def _input_freshness_metrics(background: dict[str, Any], *, now: float | None = None) -> dict[str, Any]:
+    reference_time = time.time() if now is None else now
+    result: dict[str, Any] = {"max_age_seconds": 0.0}
+    ages: list[float] = []
+    for key in ("snapshot", "quotes"):
+        raw_path = background.get(key)
+        item: dict[str, Any] = {"path": str(raw_path) if raw_path else "", "exists": False}
+        if raw_path:
+            path = Path(str(raw_path))
+            item["exists"] = path.exists()
+            if path.exists():
+                mtime = path.stat().st_mtime
+                age = max(0.0, reference_time - mtime)
+                item.update({"mtime_epoch": mtime, "age_seconds": age})
+                ages.append(age)
+        result[key] = item
+    result["max_age_seconds"] = max(ages) if ages else math.inf
+    return result
 
 
 def _markdown(result: dict[str, Any]) -> str:
@@ -450,8 +471,8 @@ def _markdown(result: dict[str, Any]) -> str:
         f"Status: `{result['status']}`",
         f"Leader policy: `{result.get('leader_policy', 'n/a')}`",
         "",
-        "| Rank | Candidate | Status | p05/mo @ capture | After cap loss | Req capture | Req capture after cap | After-cap buffer | Quote | Active cap | Rescue cap | Cap loss | Cap recovery | Cash reserve | Mkt active | Cluster active | Hours | Rows | Markets | Rescue feasible | Residual loss | Max active | DD guard | Cap guard | Note |",
-        "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
+        "| Rank | Candidate | Status | p05/mo @ capture | After cap loss | Req capture | Req capture after cap | After-cap buffer | Quote | Active cap | Rescue cap | Cap loss | Cap recovery | Cash reserve | Mkt active | Cluster active | Hours | Rows | Markets | Input age | Rescue feasible | Residual loss | Max active | DD guard | Cap guard | Note |",
+        "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
     ]
     for idx, row in enumerate(result.get("candidates", []), start=1):
         lines.append(
@@ -477,6 +498,7 @@ def _markdown(result: dict[str, Any]) -> str:
                     _num(row.get("duration_hours"), 2),
                     str(row.get("quote_rows", 0)),
                     str(row.get("unique_markets_quoted", 0)),
+                    _num(row.get("input_max_age_seconds"), 0),
                     _pct(row.get("taker_rescue_feasible_rate")),
                     _money(row.get("latest_taker_residual_loss_to_zero")),
                     _pct(row.get("drawdown_max_active_order_fraction")),
@@ -508,6 +530,7 @@ def _markdown(result: dict[str, Any]) -> str:
                     f"after-cap buffer {_pct(item.get('after_cap_loss_income_buffer_at_required_capture'))}; "
                     f"single-market active {_pct(item.get('capital_single_market_active_fraction'))}; "
                     f"single-cluster active {_pct(item.get('capital_single_cluster_active_fraction'))}; "
+                    f"input max age {_num(item.get('input_max_age_seconds'), 0)}s; "
                     f"drawdown guard {item.get('drawdown_guard_status')}; capital guard {item.get('capital_risk_status')}."
                 )
         if policy.get("note"):

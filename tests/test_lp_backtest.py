@@ -45,6 +45,7 @@ from polymarket_lp.drawdown_guard import DrawdownGuardConfig, evaluate_drawdown_
 from scripts.paper_replay import make_lp_config
 from scripts.launch_live_paper_candidate import LaunchCandidateConfig, write_launch_artifacts
 from scripts.refresh_candidate_leaderboard import (
+    _input_freshness_metrics,
     _input_staleness_error,
     _pending_capital,
     _pending_drawdown,
@@ -2364,6 +2365,10 @@ def test_refresh_candidate_leaderboard_freshness_gate_is_opt_in(tmp_path) -> Non
     manifest = {"snapshot": str(snapshot), "quotes": str(quotes)}
     now = max(snapshot.stat().st_mtime, quotes.stat().st_mtime) + 120
 
+    metrics = _input_freshness_metrics(manifest, now=now)
+    assert metrics["snapshot"]["exists"]
+    assert metrics["quotes"]["exists"]
+    assert metrics["max_age_seconds"] == pytest.approx(120)
     assert _input_staleness_error(manifest, 0.0, now=now) == ""
     assert _input_staleness_error(manifest, 300.0, now=now) == ""
     message = _input_staleness_error(manifest, 60.0, now=now)
@@ -2374,6 +2379,34 @@ def test_refresh_candidate_leaderboard_freshness_gate_is_opt_in(tmp_path) -> Non
     result = build_candidate_leaderboard([CandidateEvidence("stale", _pending_gate(message))])
     assert result["status"] == "no_public_paper_candidate_ready"
     assert not result["leader"]["income_gate_passed"]
+
+
+def test_candidate_leaderboard_exposes_input_freshness_metadata() -> None:
+    result = build_candidate_leaderboard(
+        [
+            CandidateEvidence(
+                "fresh",
+                {
+                    "status": "depth_not_ready",
+                    "metrics": {"income_p05_at_required_capture": 1200, "required_capture_rate": 0.5},
+                    "gates": {},
+                },
+                metadata={
+                    "_input_freshness": {
+                        "snapshot": {"age_seconds": 11},
+                        "quotes": {"age_seconds": 22},
+                        "max_age_seconds": 22,
+                    },
+                    "_max_input_staleness_seconds": 1800,
+                },
+            )
+        ]
+    )
+    leader = result["leader"]
+    assert leader["input_snapshot_age_seconds"] == 11
+    assert leader["input_quotes_age_seconds"] == 22
+    assert leader["input_max_age_seconds"] == 22
+    assert leader["input_freshness_gate_seconds"] == 1800
 
 
 def test_partial_rescue_grid_selection_requires_drawdown_core() -> None:

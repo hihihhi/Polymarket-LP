@@ -53,6 +53,7 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
     drawdown_blockers = drawdown.get("blockers") if isinstance(drawdown.get("blockers"), list) else []
     capital_blockers = list(capital.get("blockers")) if isinstance(capital.get("blockers"), list) else []
     metadata = _dict(candidate.metadata)
+    freshness = _dict(metadata.get("_input_freshness"))
     has_drawdown_guard = bool(drawdown)
     has_capital_risk = bool(capital)
     income_p05 = _float(metrics.get("income_p05_at_required_capture"), math.nan)
@@ -184,6 +185,10 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         "capital_after_configured_cap_loss_monthly": capital_after_configured_cap_loss,
         "capital_after_cap_loss_target_passed": after_cap_target_passed,
         "capital_pair_cost_per_share": _float(capital_metrics.get("max_pair_cost_per_share"), math.nan),
+        "input_snapshot_age_seconds": _float(_dict(freshness.get("snapshot")).get("age_seconds"), math.nan),
+        "input_quotes_age_seconds": _float(_dict(freshness.get("quotes")).get("age_seconds"), math.nan),
+        "input_max_age_seconds": _float(freshness.get("max_age_seconds"), math.nan),
+        "input_freshness_gate_seconds": _float(metadata.get("_max_input_staleness_seconds"), math.nan),
         "blockers": [str(x) for x in blockers],
         "drawdown_blockers": [str(x) for x in drawdown_blockers],
         "capital_blockers": [str(x) for x in capital_blockers],
@@ -384,6 +389,8 @@ def _leader_summary(row: dict[str, Any]) -> dict[str, Any]:
         "after_cap_loss_income_buffer_at_required_capture": row.get(
             "after_cap_loss_income_buffer_at_required_capture"
         ),
+        "input_max_age_seconds": row.get("input_max_age_seconds"),
+        "input_freshness_gate_seconds": row.get("input_freshness_gate_seconds"),
         "ranking_note": row.get("ranking_note"),
     }
 
