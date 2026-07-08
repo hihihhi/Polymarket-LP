@@ -22,9 +22,12 @@ def build_candidate_leaderboard(candidates: Iterable[CandidateEvidence]) -> dict
     rows = [_candidate_row(candidate) for candidate in candidates]
     rows.sort(key=_rank_key, reverse=True)
     leader = rows[0] if rows else {}
+    policy_leaders = _policy_leaders(rows)
     return {
         "status": _status(leader),
         "leader": leader,
+        "leader_policy": "risk_first_after_income_and_rescue_gates",
+        "policy_leaders": policy_leaders,
         "candidates": rows,
         "safety": (
             "public-paper evidence comparison only; no private keys, signing, "
@@ -91,6 +94,69 @@ def _rank_key(row: dict[str, Any]) -> tuple[float, ...]:
         float(row.get("quote_rows", 0)),
         float(row.get("duration_hours", 0.0)),
     )
+
+
+def _policy_leaders(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {}
+    eligible = [row for row in rows if row.get("income_gate_passed") and row.get("risk_gates_passed")]
+    population = eligible or rows
+    risk_first = max(population, key=_rank_key)
+    income_first = max(population, key=_income_rank_key)
+    sample_first = max(population, key=_sample_rank_key)
+    return {
+        "risk_first_leader": _leader_summary(risk_first),
+        "income_first_leader": _leader_summary(income_first),
+        "sample_first_leader": _leader_summary(sample_first),
+        "note": (
+            "risk-first is the conservative promotion lane; income-first shows the highest p05 monthly "
+            "candidate after required risk gates; sample-first favors more mature evidence"
+        ),
+    }
+
+
+def _income_rank_key(row: dict[str, Any]) -> tuple[float, ...]:
+    income = _finite(row.get("income_p05_at_required_capture"), -math.inf)
+    residual_fraction = _risk_bucket(row.get("latest_taker_residual_loss_fraction"), decimals=6, default=math.inf)
+    residual_loss = _risk_bucket(row.get("latest_taker_residual_loss_to_zero"), decimals=2, default=math.inf)
+    return (
+        float(bool(row.get("public_paper_depth_ready"))),
+        float(bool(row.get("sample_gates_passed"))),
+        income,
+        -residual_fraction,
+        -residual_loss,
+        float(row.get("unique_markets_quoted", 0)),
+        float(row.get("quote_rows", 0)),
+        float(row.get("duration_hours", 0.0)),
+    )
+
+
+def _sample_rank_key(row: dict[str, Any]) -> tuple[float, ...]:
+    income = _finite(row.get("income_p05_at_required_capture"), -math.inf)
+    residual_fraction = _risk_bucket(row.get("latest_taker_residual_loss_fraction"), decimals=6, default=math.inf)
+    return (
+        float(bool(row.get("public_paper_depth_ready"))),
+        float(bool(row.get("sample_gates_passed"))),
+        float(row.get("duration_hours", 0.0)),
+        float(row.get("quote_rows", 0)),
+        float(row.get("unique_markets_quoted", 0)),
+        -residual_fraction,
+        income,
+    )
+
+
+def _leader_summary(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": row.get("name"),
+        "status": row.get("status"),
+        "income_p05_at_required_capture": row.get("income_p05_at_required_capture"),
+        "duration_hours": row.get("duration_hours"),
+        "quote_rows": row.get("quote_rows"),
+        "unique_markets_quoted": row.get("unique_markets_quoted"),
+        "latest_taker_residual_loss_to_zero": row.get("latest_taker_residual_loss_to_zero"),
+        "latest_taker_residual_loss_fraction": row.get("latest_taker_residual_loss_fraction"),
+        "ranking_note": row.get("ranking_note"),
+    }
 
 
 def _ranking_note(row: dict[str, Any]) -> str:

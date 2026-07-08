@@ -238,6 +238,7 @@ def _markdown(result: dict[str, Any]) -> str:
         "Safety: read-only public-paper comparison; no keys, signing, orders, cancels, or paid-reward verification.",
         "",
         f"Status: `{result['status']}`",
+        f"Leader policy: `{result.get('leader_policy', 'n/a')}`",
         "",
         "| Rank | Candidate | Status | p05/mo @ capture | Hours | Rows | Markets | Rescue feasible | Residual loss | Note |",
         "|---:|---|---|---:|---:|---:|---:|---:|---:|---|",
@@ -266,6 +267,18 @@ def _markdown(result: dict[str, Any]) -> str:
     if blockers:
         lines.extend(["", f"## Leader blockers: {leader.get('name', '')}", ""])
         lines.extend(f"- {x}" for x in blockers)
+    policy = result.get("policy_leaders") or {}
+    if isinstance(policy, dict) and policy:
+        lines.extend(["", "## Policy leaders", ""])
+        for label in ["risk_first_leader", "income_first_leader", "sample_first_leader"]:
+            item = policy.get(label) or {}
+            if isinstance(item, dict) and item:
+                lines.append(
+                    f"- {label}: `{item.get('name')}`; p05/mo {_money(item.get('income_p05_at_required_capture'))}; "
+                    f"hours {_num(item.get('duration_hours'), 2)}; residual {_money(item.get('latest_taker_residual_loss_to_zero'))}."
+                )
+        if policy.get("note"):
+            lines.append(f"- note: {policy['note']}")
     lines.append("")
     return "\n".join(lines)
 

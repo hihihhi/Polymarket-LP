@@ -1902,6 +1902,48 @@ def test_candidate_leaderboard_ignores_tiny_residual_float_noise_before_income()
     assert result["leader"]["name"] == "higher_income"
 
 
+def test_candidate_leaderboard_exposes_risk_income_and_sample_policy_leaders() -> None:
+    def gate(income: float, residual: float, hours: float, rows: int) -> dict[str, object]:
+        return {
+            "status": "depth_not_ready",
+            "metrics": {
+                "duration_hours": hours,
+                "quote_rows": rows,
+                "unique_markets_quoted": 4,
+                "income_p05_at_required_capture": income,
+                "taker_rescue_feasible_rate": 0.95,
+                "taker_size_weighted_rescue_fraction": 0.99,
+                "latest_taker_residual_loss_to_zero": residual,
+                "latest_taker_residual_loss_fraction": residual / 2000,
+            },
+            "gates": {
+                "depth_ready": False,
+                "income_p05_gate_passed": True,
+                "clob_quality_gate_passed": True,
+                "taker_rescue_rate_gate_passed": True,
+                "taker_pair_edge_gate_passed": True,
+                "taker_depth_gate_passed": True,
+                "taker_residual_loss_gate_passed": True,
+                "sample_hours_gate_passed": False,
+                "quote_rows_gate_passed": True,
+                "book_scenario_gate_passed": True,
+            },
+        }
+
+    result = build_candidate_leaderboard(
+        [
+            CandidateEvidence("low_risk", gate(1050, 2, 0.2, 24)),
+            CandidateEvidence("high_income", gate(1800, 10, 0.7, 40)),
+            CandidateEvidence("mature", gate(1200, 8, 2.0, 80)),
+        ]
+    )
+    assert result["leader"]["name"] == "low_risk"
+    leaders = result["policy_leaders"]
+    assert leaders["risk_first_leader"]["name"] == "low_risk"
+    assert leaders["income_first_leader"]["name"] == "high_income"
+    assert leaders["sample_first_leader"]["name"] == "mature"
+
+
 def test_refresh_candidate_leaderboard_parses_named_paths_safely() -> None:
     assert _split_named_path("q300=C:/tmp/bg.json", "--candidate") == ("q300", "C:/tmp/bg.json")
     assert _safe_name("q300/cap10 d0.06") == "q300_cap10_d0.06"
