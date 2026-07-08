@@ -72,6 +72,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-unpaired-per-market", type=float, default=60.0)
     p.add_argument("--max-total-unpaired", type=float, default=450.0)
     p.add_argument("--max-cluster-unpaired", type=float, default=250.0)
+    p.add_argument("--min-latest-markets", type=int, default=2)
+    p.add_argument("--max-single-market-active-fraction", type=float, default=0.35)
+    p.add_argument("--max-single-cluster-active-fraction", type=float, default=0.70)
+    p.add_argument("--max-single-market-unhedged-loss-fraction", type=float, default=0.20)
+    p.add_argument("--max-single-cluster-unhedged-loss-fraction", type=float, default=0.50)
     p.add_argument("--exit-slippage", type=float, default=0.005)
     return p.parse_args()
 
@@ -281,6 +286,11 @@ def evaluate_candidate_capital(
             max_unpaired_per_market=args.max_unpaired_per_market,
             max_total_unpaired=args.max_total_unpaired,
             max_cluster_unpaired=args.max_cluster_unpaired,
+            min_latest_markets=args.min_latest_markets,
+            max_single_market_active_fraction=args.max_single_market_active_fraction,
+            max_single_cluster_active_fraction=args.max_single_cluster_active_fraction,
+            max_single_market_unhedged_loss_fraction=args.max_single_market_unhedged_loss_fraction,
+            max_single_cluster_unhedged_loss_fraction=args.max_single_cluster_unhedged_loss_fraction,
             exit_slippage=args.exit_slippage,
         ),
     )
@@ -337,7 +347,12 @@ def _pending_capital(message: str) -> dict[str, Any]:
     return {
         "status": "capital_risk_data_pending",
         "metrics": {
+            "latest_markets": 0,
             "cash_reserve_fraction": math.nan,
+            "max_single_market_active_fraction": math.nan,
+            "max_single_cluster_active_fraction": math.nan,
+            "single_market_worst_one_side_loss_fraction": math.nan,
+            "single_cluster_worst_one_side_loss_fraction": math.nan,
             "unhedged_loss_fraction_of_capital": math.nan,
             "configured_inventory_cap_loss_to_zero": math.nan,
             "configured_inventory_cap_loss_fraction": math.nan,
@@ -387,8 +402,8 @@ def _markdown(result: dict[str, Any]) -> str:
         f"Status: `{result['status']}`",
         f"Leader policy: `{result.get('leader_policy', 'n/a')}`",
         "",
-        "| Rank | Candidate | Status | p05/mo @ capture | After cap loss | Quote | Active cap | Rescue cap | Cap loss | Cap recovery | Cash reserve | Hours | Rows | Markets | Rescue feasible | Residual loss | Max active | DD guard | Cap guard | Note |",
-        "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
+        "| Rank | Candidate | Status | p05/mo @ capture | After cap loss | Quote | Active cap | Rescue cap | Cap loss | Cap recovery | Cash reserve | Mkt active | Cluster active | Hours | Rows | Markets | Rescue feasible | Residual loss | Max active | DD guard | Cap guard | Note |",
+        "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
     ]
     for idx, row in enumerate(result.get("candidates", []), start=1):
         lines.append(
@@ -406,6 +421,8 @@ def _markdown(result: dict[str, Any]) -> str:
                     _money(row.get("capital_configured_cap_loss_usdc")),
                     _num(row.get("capital_configured_cap_recovery_days"), 2),
                     _pct(row.get("capital_cash_reserve_fraction")),
+                    _pct(row.get("capital_single_market_active_fraction")),
+                    _pct(row.get("capital_single_cluster_active_fraction")),
                     _num(row.get("duration_hours"), 2),
                     str(row.get("quote_rows", 0)),
                     str(row.get("unique_markets_quoted", 0)),
@@ -436,6 +453,8 @@ def _markdown(result: dict[str, Any]) -> str:
                     f"rescue cap {_money(item.get('configured_residual_loss_cap_usdc'))}; hours {_num(item.get('duration_hours'), 2)}; "
                     f"cap loss {_money(item.get('capital_configured_cap_loss_usdc'))}; cap recovery {_num(item.get('capital_configured_cap_recovery_days'), 2)}d; "
                     f"after-cap p05 {_money(item.get('capital_after_configured_cap_loss_monthly'))}; "
+                    f"single-market active {_pct(item.get('capital_single_market_active_fraction'))}; "
+                    f"single-cluster active {_pct(item.get('capital_single_cluster_active_fraction'))}; "
                     f"drawdown guard {item.get('drawdown_guard_status')}; capital guard {item.get('capital_risk_status')}."
                 )
         if policy.get("note"):

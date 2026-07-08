@@ -44,6 +44,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-unpaired-per-market", type=float, default=60.0)
     p.add_argument("--max-total-unpaired", type=float, default=450.0)
     p.add_argument("--max-cluster-unpaired", type=float, default=250.0)
+    p.add_argument("--min-latest-markets", type=int, default=2)
+    p.add_argument("--max-single-market-active-fraction", type=float, default=0.35)
+    p.add_argument("--max-single-cluster-active-fraction", type=float, default=0.70)
+    p.add_argument("--max-single-market-unhedged-loss-fraction", type=float, default=0.20)
+    p.add_argument("--max-single-cluster-unhedged-loss-fraction", type=float, default=0.50)
     p.add_argument("--exit-slippage", type=float, default=0.005)
     p.add_argument("--days-per-month", type=float, default=30.0)
     return p.parse_args()
@@ -60,6 +65,11 @@ def main() -> None:
         max_unpaired_per_market=args.max_unpaired_per_market,
         max_total_unpaired=args.max_total_unpaired,
         max_cluster_unpaired=args.max_cluster_unpaired,
+        min_latest_markets=args.min_latest_markets,
+        max_single_market_active_fraction=args.max_single_market_active_fraction,
+        max_single_cluster_active_fraction=args.max_single_cluster_active_fraction,
+        max_single_market_unhedged_loss_fraction=args.max_single_market_unhedged_loss_fraction,
+        max_single_cluster_unhedged_loss_fraction=args.max_single_cluster_unhedged_loss_fraction,
         exit_slippage=args.exit_slippage,
         days_per_month=args.days_per_month,
     )
@@ -100,8 +110,11 @@ def _markdown(result: dict[str, Any]) -> str:
         f"| Latest timestamp | {m.get('latest_timestamp', 'n/a')} |",
         f"| Latest quote rows / markets | {m.get('latest_quote_rows')} / {m.get('latest_markets')} |",
         f"| Active pair notional | {_money(m.get('active_pair_notional'))} |",
+        f"| Max single-market active | {_money(m.get('max_single_market_active_notional'))} ({_pct(m.get('max_single_market_active_fraction'))}) |",
+        f"| Max single-cluster active | {_money(m.get('max_single_cluster_active_notional'))} ({_pct(m.get('max_single_cluster_active_fraction'))}) |",
         f"| Cash reserve | {_money(m.get('cash_reserve_usdc'))} ({_pct(m.get('cash_reserve_fraction'))}) |",
-        f"| Single-market one-side loss to zero | {_money(m.get('single_market_worst_one_side_loss_to_zero'))} |",
+        f"| Single-market one-side loss to zero | {_money(m.get('single_market_worst_one_side_loss_to_zero'))} ({_pct(m.get('single_market_worst_one_side_loss_fraction'))}) |",
+        f"| Single-cluster one-side loss to zero | {_money(m.get('single_cluster_worst_one_side_loss_to_zero'))} ({_pct(m.get('single_cluster_worst_one_side_loss_fraction'))}) |",
         f"| All-active unhedged one-side loss to zero | {_money(m.get('all_active_unhedged_one_side_loss_to_zero'))} ({_pct(m.get('unhedged_loss_fraction_of_capital'))}) |",
         f"| Configured inventory-cap loss to zero | {_money(m.get('configured_inventory_cap_loss_to_zero'))} ({_pct(m.get('configured_inventory_cap_loss_fraction'))}) |",
         f"| Immediate-exit slippage loss if caps reject | {_money(m.get('immediate_exit_slippage_loss_if_caps_reject'))} |",

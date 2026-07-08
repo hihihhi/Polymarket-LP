@@ -139,6 +139,19 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         "drawdown_max_active_order_fraction": _float(drawdown_metrics.get("max_active_order_fraction"), math.nan),
         "capital_cash_reserve_fraction": _float(capital_metrics.get("cash_reserve_fraction"), math.nan),
         "capital_active_pair_notional": _float(capital_metrics.get("active_pair_notional"), math.nan),
+        "capital_latest_markets": int(_float(capital_metrics.get("latest_markets"), 0.0)),
+        "capital_single_market_active_fraction": _float(
+            capital_metrics.get("max_single_market_active_fraction"), math.nan
+        ),
+        "capital_single_cluster_active_fraction": _float(
+            capital_metrics.get("max_single_cluster_active_fraction"), math.nan
+        ),
+        "capital_single_market_loss_fraction": _float(
+            capital_metrics.get("single_market_worst_one_side_loss_fraction"), math.nan
+        ),
+        "capital_single_cluster_loss_fraction": _float(
+            capital_metrics.get("single_cluster_worst_one_side_loss_fraction"), math.nan
+        ),
         "capital_unhedged_loss_fraction": _float(capital_metrics.get("unhedged_loss_fraction_of_capital"), math.nan),
         "capital_unhedged_loss_usdc": _float(capital_metrics.get("all_active_unhedged_one_side_loss_to_zero"), math.nan),
         "capital_configured_cap_loss_usdc": capital_configured_cap_loss,
@@ -179,6 +192,14 @@ def _rank_key(row: dict[str, Any]) -> tuple[float, ...]:
     active_orders = _risk_bucket(row.get("drawdown_max_active_order_fraction"), decimals=6, default=math.inf)
     cap_loss = _risk_bucket(row.get("capital_configured_cap_loss_fraction"), decimals=6, default=math.inf)
     cap_recovery = _risk_bucket(row.get("capital_configured_cap_recovery_days"), decimals=4, default=math.inf)
+    single_market_active = _risk_bucket(
+        row.get("capital_single_market_active_fraction"), decimals=6, default=math.inf
+    )
+    single_cluster_active = _risk_bucket(
+        row.get("capital_single_cluster_active_fraction"), decimals=6, default=math.inf
+    )
+    single_market_loss = _risk_bucket(row.get("capital_single_market_loss_fraction"), decimals=6, default=math.inf)
+    single_cluster_loss = _risk_bucket(row.get("capital_single_cluster_loss_fraction"), decimals=6, default=math.inf)
     unhedged_loss = _risk_bucket(row.get("capital_unhedged_loss_fraction"), decimals=6, default=math.inf)
     cash_reserve = _finite(row.get("capital_cash_reserve_fraction"), -math.inf)
     reward_loss = _finite(row.get("drawdown_reward_to_trading_loss_ratio"), -math.inf)
@@ -197,6 +218,10 @@ def _rank_key(row: dict[str, Any]) -> tuple[float, ...]:
         -active_orders,
         -cap_loss,
         -cap_recovery,
+        -single_market_active,
+        -single_cluster_active,
+        -single_market_loss,
+        -single_cluster_loss,
         -unhedged_loss,
         cash_reserve,
         reward_loss,
@@ -300,6 +325,11 @@ def _leader_summary(row: dict[str, Any]) -> dict[str, Any]:
         "drawdown_max_active_order_fraction": row.get("drawdown_max_active_order_fraction"),
         "capital_risk_status": row.get("capital_risk_status"),
         "capital_cash_reserve_fraction": row.get("capital_cash_reserve_fraction"),
+        "capital_latest_markets": row.get("capital_latest_markets"),
+        "capital_single_market_active_fraction": row.get("capital_single_market_active_fraction"),
+        "capital_single_cluster_active_fraction": row.get("capital_single_cluster_active_fraction"),
+        "capital_single_market_loss_fraction": row.get("capital_single_market_loss_fraction"),
+        "capital_single_cluster_loss_fraction": row.get("capital_single_cluster_loss_fraction"),
         "capital_unhedged_loss_fraction": row.get("capital_unhedged_loss_fraction"),
         "capital_configured_cap_loss_usdc": row.get("capital_configured_cap_loss_usdc"),
         "capital_configured_cap_loss_fraction": row.get("capital_configured_cap_loss_fraction"),

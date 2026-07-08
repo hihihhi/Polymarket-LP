@@ -1161,6 +1161,45 @@ def test_capital_risk_stress_blocks_total_ruin() -> None:
     assert not result["gates"]["capital_risk_stress_passed"]
 
 
+def test_capital_risk_stress_blocks_single_market_concentration() -> None:
+    quotes = pd.DataFrame(
+        [
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m1",
+                "cluster": "macro",
+                "side": "YES",
+                "bid_price": 0.50,
+                "size_shares": 1000,
+                "active_order_notional_pair": 900,
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m1",
+                "cluster": "macro",
+                "side": "NO",
+                "bid_price": 0.45,
+                "size_shares": 1000,
+                "active_order_notional_pair": 900,
+            },
+        ]
+    )
+    result = evaluate_capital_risk_stress(
+        quotes,
+        target_status={"capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 2000.0}]},
+        cfg=CapitalRiskStressConfig(
+            initial_capital=2000,
+            min_latest_markets=2,
+            max_single_market_active_fraction=0.35,
+            max_single_market_unhedged_loss_fraction=0.20,
+        ),
+    )
+    assert not result["gates"]["latest_market_count_gate_passed"]
+    assert not result["gates"]["single_market_active_gate_passed"]
+    assert not result["gates"]["single_market_loss_gate_passed"]
+    assert not result["gates"]["capital_risk_stress_passed"]
+
+
 def test_allocation_selector_balances_income_and_survival() -> None:
     rows = [
         {

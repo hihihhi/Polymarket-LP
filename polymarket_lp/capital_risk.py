@@ -24,6 +24,11 @@ class CapitalRiskStressConfig:
     max_unpaired_per_market: float = 60.0
     max_total_unpaired: float = 450.0
     max_cluster_unpaired: float = 250.0
+    min_latest_markets: int = 2
+    max_single_market_active_fraction: float = 0.35
+    max_single_cluster_active_fraction: float = 0.70
+    max_single_market_unhedged_loss_fraction: float = 0.20
+    max_single_cluster_unhedged_loss_fraction: float = 0.50
     exit_slippage: float = 0.005
     days_per_month: float = 30.0
 
@@ -110,6 +115,11 @@ def evaluate_capital_risk_stress(
     unhedged_loss = float(market["one_side_worst_loss_to_zero"].sum())
     single_market_loss = float(market["one_side_worst_loss_to_zero"].max())
     by_cluster = market.groupby("cluster")["one_side_worst_loss_to_zero"].sum()
+    by_cluster_active = market.groupby("cluster")["active_pair_notional"].sum()
+    latest_markets = int(market["condition_id"].nunique())
+    max_single_market_active = float(market["active_pair_notional"].max())
+    max_single_cluster_active = float(by_cluster_active.max())
+    max_single_cluster_loss = float(by_cluster.max())
     capped_by_market = float(market["one_side_worst_loss_to_zero"].clip(upper=cfg.max_unpaired_per_market).sum())
     capped_by_cluster = float(by_cluster.clip(upper=cfg.max_cluster_unpaired).sum())
     capped_loss = min(unhedged_loss, cfg.max_total_unpaired, capped_by_market, capped_by_cluster)
@@ -124,11 +134,26 @@ def evaluate_capital_risk_stress(
     metrics = {
         "latest_timestamp": str(latest_ts),
         "latest_quote_rows": int(len(latest)),
-        "latest_markets": int(market["condition_id"].nunique()),
+        "latest_markets": latest_markets,
         "active_pair_notional": active_notional,
         "cash_reserve_usdc": cash_reserve,
         "cash_reserve_fraction": cash_reserve_fraction,
+        "max_single_market_active_notional": max_single_market_active,
+        "max_single_market_active_fraction": max_single_market_active / cfg.initial_capital
+        if cfg.initial_capital > 0
+        else math.inf,
+        "max_single_cluster_active_notional": max_single_cluster_active,
+        "max_single_cluster_active_fraction": max_single_cluster_active / cfg.initial_capital
+        if cfg.initial_capital > 0
+        else math.inf,
         "single_market_worst_one_side_loss_to_zero": single_market_loss,
+        "single_market_worst_one_side_loss_fraction": single_market_loss / cfg.initial_capital
+        if cfg.initial_capital > 0
+        else math.inf,
+        "single_cluster_worst_one_side_loss_to_zero": max_single_cluster_loss,
+        "single_cluster_worst_one_side_loss_fraction": max_single_cluster_loss / cfg.initial_capital
+        if cfg.initial_capital > 0
+        else math.inf,
         "all_active_unhedged_one_side_loss_to_zero": unhedged_loss,
         "unhedged_loss_fraction_of_capital": unhedged_loss / cfg.initial_capital if cfg.initial_capital > 0 else math.inf,
         "configured_inventory_cap_loss_to_zero": capped_loss,
@@ -142,6 +167,15 @@ def evaluate_capital_risk_stress(
     }
     gates = {
         "cash_reserve_gate_passed": cash_reserve_fraction >= cfg.min_cash_reserve_fraction,
+        "latest_market_count_gate_passed": latest_markets >= cfg.min_latest_markets,
+        "single_market_active_gate_passed": metrics["max_single_market_active_fraction"]
+        <= cfg.max_single_market_active_fraction,
+        "single_cluster_active_gate_passed": metrics["max_single_cluster_active_fraction"]
+        <= cfg.max_single_cluster_active_fraction,
+        "single_market_loss_gate_passed": metrics["single_market_worst_one_side_loss_fraction"]
+        <= cfg.max_single_market_unhedged_loss_fraction,
+        "single_cluster_loss_gate_passed": metrics["single_cluster_worst_one_side_loss_fraction"]
+        <= cfg.max_single_cluster_unhedged_loss_fraction,
         "no_total_ruin_unhedged_gate_passed": unhedged_loss < cfg.initial_capital,
         "unhedged_loss_gate_passed": metrics["unhedged_loss_fraction_of_capital"] <= cfg.max_unhedged_loss_fraction,
         "configured_cap_loss_gate_passed": metrics["configured_inventory_cap_loss_fraction"] <= cfg.max_capped_loss_fraction,
@@ -208,6 +242,11 @@ def _captured_p05_monthly(target_status: dict[str, Any] | None) -> float:
 def _blockers(gates: dict[str, bool], cfg: CapitalRiskStressConfig) -> list[str]:
     names = {
         "cash_reserve_gate_passed": f"cash reserve below {cfg.min_cash_reserve_fraction:.0%}",
+        "latest_market_count_gate_passed": f"latest quoted markets below {cfg.min_latest_markets}",
+        "single_market_active_gate_passed": f"single-market active notional exceeds {cfg.max_single_market_active_fraction:.0%} of capital",
+        "single_cluster_active_gate_passed": f"single-cluster active notional exceeds {cfg.max_single_cluster_active_fraction:.0%} of capital",
+        "single_market_loss_gate_passed": f"single-market one-side loss exceeds {cfg.max_single_market_unhedged_loss_fraction:.0%} of capital",
+        "single_cluster_loss_gate_passed": f"single-cluster one-side loss exceeds {cfg.max_single_cluster_unhedged_loss_fraction:.0%} of capital",
         "no_total_ruin_unhedged_gate_passed": "unhedged one-side fill stress can lose all capital",
         "unhedged_loss_gate_passed": f"unhedged one-side fill loss exceeds {cfg.max_unhedged_loss_fraction:.0%} of capital",
         "configured_cap_loss_gate_passed": f"configured inventory-cap loss exceeds {cfg.max_capped_loss_fraction:.0%} of capital",
