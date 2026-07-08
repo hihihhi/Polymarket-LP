@@ -45,6 +45,7 @@ from polymarket_lp.drawdown_guard import DrawdownGuardConfig, evaluate_drawdown_
 from scripts.paper_replay import make_lp_config
 from scripts.launch_live_paper_candidate import LaunchCandidateConfig, write_launch_artifacts
 from scripts.refresh_candidate_leaderboard import (
+    _input_staleness_error,
     _pending_capital,
     _pending_drawdown,
     _pending_gate,
@@ -2353,6 +2354,26 @@ def test_refresh_candidate_leaderboard_pending_candidate_is_non_promotable() -> 
     assert not result["leader"]["income_gate_passed"]
     assert not result["leader"]["drawdown_core_passed"]
     assert not result["leader"]["capital_core_passed"]
+
+
+def test_refresh_candidate_leaderboard_freshness_gate_is_opt_in(tmp_path) -> None:
+    snapshot = tmp_path / "snapshots.csv"
+    quotes = tmp_path / "quotes.csv"
+    snapshot.write_text("timestamp\n", encoding="utf-8")
+    quotes.write_text("timestamp\n", encoding="utf-8")
+    manifest = {"snapshot": str(snapshot), "quotes": str(quotes)}
+    now = max(snapshot.stat().st_mtime, quotes.stat().st_mtime) + 120
+
+    assert _input_staleness_error(manifest, 0.0, now=now) == ""
+    assert _input_staleness_error(manifest, 300.0, now=now) == ""
+    message = _input_staleness_error(manifest, 60.0, now=now)
+    assert message.startswith("input freshness gate failed")
+    assert "snapshot age" in message
+    assert "quotes age" in message
+
+    result = build_candidate_leaderboard([CandidateEvidence("stale", _pending_gate(message))])
+    assert result["status"] == "no_public_paper_candidate_ready"
+    assert not result["leader"]["income_gate_passed"]
 
 
 def test_partial_rescue_grid_selection_requires_drawdown_core() -> None:

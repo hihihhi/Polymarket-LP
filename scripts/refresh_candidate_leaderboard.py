@@ -13,6 +13,7 @@ import json
 import math
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-single-market-unhedged-loss-fraction", type=float, default=0.20)
     p.add_argument("--max-single-cluster-unhedged-loss-fraction", type=float, default=0.50)
     p.add_argument("--max-capture-needed-after-cap-loss", type=float, default=0.40)
+    p.add_argument(
+        "--max-input-staleness-seconds",
+        type=float,
+        default=0.0,
+        help="Optional live-monitor freshness gate for snapshot/quote CSV mtimes; 0 disables.",
+    )
     p.add_argument("--exit-slippage", type=float, default=0.005)
     return p.parse_args()
 
@@ -93,6 +100,9 @@ def main() -> None:
         background = json.loads(Path(background_path).read_text(encoding="utf-8-sig"))
         candidate_dir = work_dir / _safe_name(name)
         try:
+            freshness_error = _input_staleness_error(background, args.max_input_staleness_seconds)
+            if freshness_error:
+                raise SystemExit(freshness_error)
             refreshed_paths = refresh_candidate(name, background, candidate_dir, args, seed=args.bootstrap_seed + index)
             gate = json.loads(refreshed_paths["gate"].read_text(encoding="utf-8-sig"))
             drawdown_guard = evaluate_candidate_drawdown(name, background, args)
@@ -395,6 +405,40 @@ def _split_named_path(item: str, flag: str) -> tuple[str, str]:
 
 def _safe_name(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name).strip("._") or "candidate"
+
+
+def _input_staleness_error(
+    background: dict[str, Any],
+    max_staleness_seconds: float,
+    *,
+    now: float | None = None,
+) -> str:
+    """Return a blocker if live leaderboard CSV inputs are too stale.
+
+    The gate is opt-in so historical reruns stay reproducible, while live
+    promotion monitors can reject dead collectors or stale quote files.
+    """
+
+    if max_staleness_seconds <= 0:
+        return ""
+    reference_time = time.time() if now is None else now
+    stale: list[str] = []
+    missing: list[str] = []
+    for key in ("snapshot", "quotes"):
+        raw_path = background.get(key)
+        if not raw_path:
+            missing.append(f"{key} path missing")
+            continue
+        path = Path(str(raw_path))
+        if not path.exists():
+            missing.append(f"{key} path does not exist: {path}")
+            continue
+        age = max(0.0, reference_time - path.stat().st_mtime)
+        if age > max_staleness_seconds:
+            stale.append(f"{key} age {age:.0f}s > {max_staleness_seconds:.0f}s")
+    if missing or stale:
+        return "input freshness gate failed: " + "; ".join(missing + stale)
+    return ""
 
 
 def _markdown(result: dict[str, Any]) -> str:
