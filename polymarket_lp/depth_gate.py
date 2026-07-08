@@ -24,6 +24,8 @@ class DepthReadinessConfig:
     min_taker_rescue_pair_edge_per_share: float = 0.0
     min_taker_rescue_depth_fraction: float = 1.0
     require_clob_book_quality: bool = True
+    allow_partial_taker_rescue: bool = False
+    max_latest_taker_residual_loss_fraction: float = 0.05
 
 
 def evaluate_depth_readiness(
@@ -58,6 +60,14 @@ def evaluate_depth_readiness(
     taker_rate = _float(rescue_metrics.get("taker_rescue_feasible_rate"), math.nan)
     min_edge = _float(rescue_metrics.get("taker_rescue_min_pair_edge_per_share"), math.nan)
     min_depth = _float(rescue_metrics.get("taker_rescue_min_depth_fraction"), math.nan)
+    residual_loss = _float(rescue_metrics.get("latest_taker_residual_loss_to_zero"), math.nan)
+    residual_loss_fraction = _float(rescue_metrics.get("latest_taker_residual_loss_fraction"), math.nan)
+    size_weighted_rescue_fraction = _float(rescue_metrics.get("taker_size_weighted_rescue_fraction"), math.nan)
+    depth_gate_passed = math.isfinite(min_depth) and min_depth >= cfg.min_taker_rescue_depth_fraction - 1e-12
+    residual_gate_passed = (
+        math.isfinite(residual_loss_fraction)
+        and residual_loss_fraction <= cfg.max_latest_taker_residual_loss_fraction
+    )
 
     gates = {
         "income_p05_gate_passed": math.isfinite(income_p05) and income_p05 >= cfg.target_monthly_usdc,
@@ -70,8 +80,8 @@ def evaluate_depth_readiness(
         and taker_rate >= cfg.min_taker_rescue_feasible_rate,
         "taker_pair_edge_gate_passed": math.isfinite(min_edge)
         and min_edge >= cfg.min_taker_rescue_pair_edge_per_share - 1e-12,
-        "taker_depth_gate_passed": math.isfinite(min_depth)
-        and min_depth >= cfg.min_taker_rescue_depth_fraction - 1e-12,
+        "taker_depth_gate_passed": depth_gate_passed or (cfg.allow_partial_taker_rescue and residual_gate_passed),
+        "taker_residual_loss_gate_passed": (not cfg.allow_partial_taker_rescue) or residual_gate_passed,
     }
     gates["depth_ready"] = bool(all(gates.values()))
     return {
@@ -87,6 +97,10 @@ def evaluate_depth_readiness(
             "taker_rescue_feasible_rate": taker_rate,
             "taker_rescue_min_pair_edge_per_share": min_edge,
             "taker_rescue_min_depth_fraction": min_depth,
+            "partial_taker_rescue_allowed": cfg.allow_partial_taker_rescue,
+            "taker_size_weighted_rescue_fraction": size_weighted_rescue_fraction,
+            "latest_taker_residual_loss_to_zero": residual_loss,
+            "latest_taker_residual_loss_fraction": residual_loss_fraction,
         },
         "gates": gates,
         "blockers": _blockers(gates, cfg),
@@ -118,7 +132,11 @@ def _blockers(gates: dict[str, bool], cfg: DepthReadinessConfig) -> list[str]:
         "book_scenario_gate_passed": f"needs at least {cfg.min_book_scenarios} taker-rescue book scenarios",
         "taker_rescue_rate_gate_passed": f"taker rescue feasible rate below {cfg.min_taker_rescue_feasible_rate:.0%}",
         "taker_pair_edge_gate_passed": "taker rescue pair edge below requirement",
-        "taker_depth_gate_passed": "taker rescue displayed depth below required quote size",
+        "taker_depth_gate_passed": "taker rescue displayed depth below required quote size and partial-residual cap did not pass",
+        "taker_residual_loss_gate_passed": (
+            f"latest partial taker-rescue residual loss exceeds "
+            f"{cfg.max_latest_taker_residual_loss_fraction:.0%} of capital"
+        ),
     }
     return [message for gate, message in labels.items() if not gates.get(gate, False)]
 

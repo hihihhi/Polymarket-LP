@@ -11,6 +11,7 @@ from polymarket_lp.lp_backtest import (
     filter_snapshots_for_strategy,
     handle_fill,
     make_synthetic_snapshots,
+    partial_rescue_residual_capped_quote_size,
     quote_for_row,
     rescue_quote_for_inventory,
     simulate_lp,
@@ -147,6 +148,53 @@ def test_depth_cap_quote_size_drops_quotes_below_minimum() -> None:
     cfg = LPConfig(quote_size_shares=100, depth_cap_quote_size=True)
     q = quote_for_row(row, cfg)
     assert q["quote_size"] == 30.0
+    assert not q["eligible"]
+
+
+def test_partial_rescue_residual_cap_allows_bounded_extra_size() -> None:
+    row = pd.Series(
+        {
+            "yes_mid": 0.42,
+            "no_mid": 0.58,
+            "max_incentive_spread": 0.05,
+            "min_incentive_size": 10.0,
+            "reward_daily": 100.0,
+            "yes_best_ask_size": 50.0,
+            "no_best_ask_size": 25.0,
+        }
+    )
+    cfg = LPConfig(
+        quote_size_shares=300,
+        quote_offset=0.02,
+        partial_rescue_max_residual_loss_usdc=30.0,
+    )
+    capped = partial_rescue_residual_capped_quote_size(
+        row,
+        cfg,
+        base_size=300,
+        yes_bid=0.40,
+        no_bid=0.56,
+    )
+    assert round(capped, 6) == round(min(25 + 30 / 0.40, 50 + 30 / 0.56), 6)
+    q = quote_for_row(row, cfg)
+    assert q["eligible"]
+    assert float(q["quote_size"]) > 25
+    assert float(q["quote_size"]) < 300
+
+
+def test_partial_rescue_residual_cap_requires_book_depth() -> None:
+    row = pd.Series(
+        {
+            "yes_mid": 0.42,
+            "no_mid": 0.58,
+            "max_incentive_spread": 0.05,
+            "min_incentive_size": 10.0,
+            "reward_daily": 100.0,
+        }
+    )
+    cfg = LPConfig(quote_size_shares=300, partial_rescue_max_residual_loss_usdc=30.0)
+    q = quote_for_row(row, cfg)
+    assert q["quote_size"] == 0.0
     assert not q["eligible"]
 
 
@@ -1424,6 +1472,89 @@ def test_rescue_stress_reports_taker_depth_feasibility() -> None:
     assert result["gates"]["taker_rescue_depth_gate_passed"]
 
 
+def test_rescue_stress_reports_partial_taker_residual_loss() -> None:
+    quotes = pd.DataFrame(
+        [
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "side": "YES",
+                "bid_price": 0.40,
+                "size_shares": 100,
+                "quote_offset": 0.02,
+                "yes_best_ask": 0.43,
+                "yes_best_ask_size": 100,
+                "no_best_ask": 0.58,
+                "no_best_ask_size": 25,
+            },
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "side": "NO",
+                "bid_price": 0.55,
+                "size_shares": 100,
+                "quote_offset": 0.02,
+                "yes_best_ask": 0.43,
+                "yes_best_ask_size": 100,
+                "no_best_ask": 0.58,
+                "no_best_ask_size": 25,
+            },
+        ]
+    )
+    result = evaluate_rescue_stress(
+        quotes,
+        RescueStressConfig(
+            require_taker_residual_loss=True,
+            max_latest_taker_residual_loss_fraction=0.02,
+        ),
+    )
+    assert result["status"] == "rescue_stress_passed"
+    assert round(result["metrics"]["taker_size_weighted_rescue_fraction"], 4) == 0.625
+    assert round(result["metrics"]["latest_taker_residual_loss_to_zero"], 6) == 30.0
+    assert result["gates"]["taker_residual_loss_gate_passed"]
+
+
+def test_rescue_stress_blocks_excess_partial_taker_residual_loss() -> None:
+    quotes = pd.DataFrame(
+        [
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "side": "YES",
+                "bid_price": 0.40,
+                "size_shares": 100,
+                "quote_offset": 0.02,
+                "yes_best_ask": 0.43,
+                "yes_best_ask_size": 100,
+                "no_best_ask": 0.58,
+                "no_best_ask_size": 5,
+            },
+            {
+                "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "condition_id": "m1",
+                "side": "NO",
+                "bid_price": 0.55,
+                "size_shares": 100,
+                "quote_offset": 0.02,
+                "yes_best_ask": 0.43,
+                "yes_best_ask_size": 5,
+                "no_best_ask": 0.58,
+                "no_best_ask_size": 100,
+            },
+        ]
+    )
+    result = evaluate_rescue_stress(
+        quotes,
+        RescueStressConfig(
+            require_taker_residual_loss=True,
+            max_latest_taker_residual_loss_fraction=0.005,
+        ),
+    )
+    assert result["status"] == "rescue_stress_failed"
+    assert result["metrics"]["latest_taker_residual_loss_fraction"] > 0.005
+    assert not result["gates"]["taker_residual_loss_gate_passed"]
+
+
 def test_depth_readiness_requires_income_sample_and_taker_depth() -> None:
     target_status = {
         "paper_summary": {"duration_hours": 6.5, "quote_rows": 30, "quote_data_quality_counts": {"clob_book_both_sides": 30}},
@@ -1448,6 +1579,42 @@ def test_depth_readiness_requires_income_sample_and_taker_depth() -> None:
     )
     assert result["status"] == "depth_ready"
     assert result["blockers"] == []
+
+
+def test_depth_readiness_can_accept_partial_rescue_residual_cap() -> None:
+    target_status = {
+        "paper_summary": {"duration_hours": 6.5, "quote_rows": 30, "quote_data_quality_counts": {"clob_book_both_sides": 30}},
+        "target_monitor": {
+            "input": {"duration_hours": 6.5, "quote_rows": 30, "unique_markets_quoted": 3},
+            "target_math": {"net_monthly_after_loss_haircut": 3000},
+        },
+        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200}],
+    }
+    rescue = {
+        "metrics": {
+            "taker_rescue_book_scenarios": 30,
+            "taker_rescue_feasible_rate": 0.85,
+            "taker_rescue_min_pair_edge_per_share": 0.01,
+            "taker_rescue_min_depth_fraction": 0.2,
+            "taker_size_weighted_rescue_fraction": 0.9,
+            "latest_taker_residual_loss_to_zero": 50,
+            "latest_taker_residual_loss_fraction": 0.025,
+        }
+    }
+    result = evaluate_depth_readiness(
+        target_status=target_status,
+        rescue_stress=rescue,
+        cfg=DepthReadinessConfig(
+            min_observation_hours=6,
+            min_quote_rows=24,
+            min_book_scenarios=24,
+            allow_partial_taker_rescue=True,
+            max_latest_taker_residual_loss_fraction=0.05,
+        ),
+    )
+    assert result["status"] == "depth_ready"
+    assert result["gates"]["taker_depth_gate_passed"]
+    assert result["gates"]["taker_residual_loss_gate_passed"]
 
 
 def test_depth_readiness_blocks_short_non_depth_sample() -> None:
@@ -1529,6 +1696,7 @@ def test_paper_replay_make_config_can_use_risk_governor_json(tmp_path) -> None:
         depth_cap_quote_size=False,
         depth_quote_size_fraction=1.0,
         min_depth_capped_quote_size=1.0,
+        partial_rescue_max_residual_loss_usdc=0.0,
         risk_governor_json=str(risk_path),
         allow_risk_governor_not_core=False,
     )

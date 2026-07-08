@@ -31,6 +31,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-taker-rescue-feasible-rate", type=float, default=0.80)
     p.add_argument("--min-taker-rescue-pair-edge-per-share", type=float, default=0.0)
     p.add_argument("--min-taker-rescue-depth-fraction", type=float, default=1.0)
+    p.add_argument("--allow-partial-taker-rescue", action="store_true")
+    p.add_argument("--max-latest-taker-residual-loss-fraction", type=float, default=0.05)
     p.add_argument("--allow-non-clob-quality", action="store_true")
     return p.parse_args()
 
@@ -53,6 +55,8 @@ def main() -> None:
             min_taker_rescue_pair_edge_per_share=args.min_taker_rescue_pair_edge_per_share,
             min_taker_rescue_depth_fraction=args.min_taker_rescue_depth_fraction,
             require_clob_book_quality=not args.allow_non_clob_quality,
+            allow_partial_taker_rescue=args.allow_partial_taker_rescue,
+            max_latest_taker_residual_loss_fraction=args.max_latest_taker_residual_loss_fraction,
         ),
     )
     payload = {
@@ -88,6 +92,9 @@ def _markdown(payload: dict[str, Any]) -> str:
         f"| Taker rescue feasible rate | {_pct(m.get('taker_rescue_feasible_rate'))} |",
         f"| Min taker pair edge/share | {_num(m.get('taker_rescue_min_pair_edge_per_share'), 4)} |",
         f"| Min taker depth fraction | {_num(m.get('taker_rescue_min_depth_fraction'), 2)} |",
+        f"| Partial taker rescue allowed | {m.get('partial_taker_rescue_allowed')} |",
+        f"| Size-weighted rescued fraction | {_pct(m.get('taker_size_weighted_rescue_fraction'))} |",
+        f"| Latest residual loss | {_money(m.get('latest_taker_residual_loss_to_zero'))} ({_pct(m.get('latest_taker_residual_loss_fraction'))}) |",
         "",
         "| Gate | Passed |",
         "|---|:---:|",

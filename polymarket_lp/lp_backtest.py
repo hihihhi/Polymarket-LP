@@ -41,6 +41,7 @@ class LPConfig:
     depth_cap_quote_size: bool = False
     depth_quote_size_fraction: float = 1.0
     min_depth_capped_quote_size_shares: float = 1.0
+    partial_rescue_max_residual_loss_usdc: float = 0.0
 
 
 @dataclass(slots=True)
@@ -207,6 +208,46 @@ def depth_capped_quote_size(row: pd.Series, cfg: LPConfig, *, base_size: float |
     return capped if capped >= cfg.min_depth_capped_quote_size_shares else 0.0
 
 
+def partial_rescue_residual_capped_quote_size(
+    row: pd.Series,
+    cfg: LPConfig,
+    *,
+    base_size: float,
+    yes_bid: float,
+    no_bid: float,
+) -> float:
+    """Cap size so a top-book partial rescue leaves bounded residual loss.
+
+    Strict depth capping requires the opposite displayed ask size to cover the
+    full quote. This softer cap allows larger quotes only when any unfilled
+    residual, after consuming displayed opposite ask depth, is still within a
+    configured per-market one-sided loss budget.
+    """
+
+    size = float(base_size)
+    cap = float(cfg.partial_rescue_max_residual_loss_usdc)
+    if cap <= 0:
+        return size
+    try:
+        yes_ask_size = float(row.get("yes_best_ask_size", np.nan))
+        no_ask_size = float(row.get("no_best_ask_size", np.nan))
+    except (TypeError, ValueError):
+        return 0.0
+    if (
+        not math.isfinite(yes_ask_size)
+        or not math.isfinite(no_ask_size)
+        or yes_ask_size < 0
+        or no_ask_size < 0
+        or yes_bid <= 0
+        or no_bid <= 0
+    ):
+        return 0.0
+    yes_fill_limit = no_ask_size + cap / float(yes_bid)
+    no_fill_limit = yes_ask_size + cap / float(no_bid)
+    capped = min(size, yes_fill_limit, no_fill_limit)
+    return capped if capped >= cfg.min_depth_capped_quote_size_shares else 0.0
+
+
 def quote_for_row(row: pd.Series, cfg: LPConfig, *, quote_offset: float | None = None, quote_size: float | None = None) -> dict[str, float | bool]:
     offset = cfg.quote_offset if quote_offset is None else float(quote_offset)
     size = depth_capped_quote_size(row, cfg, base_size=quote_size)
@@ -220,6 +261,7 @@ def quote_for_row(row: pd.Series, cfg: LPConfig, *, quote_offset: float | None =
         y_bid = max(0.001, y_bid - cut)
         n_bid = max(0.001, n_bid - cut)
         pair_cost = y_bid + n_bid
+    size = partial_rescue_residual_capped_quote_size(row, cfg, base_size=size, yes_bid=y_bid, no_bid=n_bid)
     max_spread = float(row["max_incentive_spread"])
     min_size = float(row.get("min_incentive_size", 0))
     eligible = size > 0 and size >= min_size and offset <= max_spread and pair_cost <= 1 - cfg.safety_margin + 1e-9

@@ -39,6 +39,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--taker-rescue-min-pair-edge-per-share", type=float, default=0.0)
     p.add_argument("--min-taker-rescue-depth-fraction", type=float, default=1.0)
     p.add_argument("--min-taker-rescue-feasible-rate", type=float, default=0.80)
+    p.add_argument("--require-taker-residual-loss", action="store_true")
+    p.add_argument("--max-latest-taker-residual-loss-fraction", type=float, default=0.05)
     return p.parse_args()
 
 
@@ -58,6 +60,8 @@ def main() -> None:
         taker_rescue_min_pair_edge_per_share=args.taker_rescue_min_pair_edge_per_share,
         min_taker_rescue_depth_fraction=args.min_taker_rescue_depth_fraction,
         min_taker_rescue_feasible_rate=args.min_taker_rescue_feasible_rate,
+        require_taker_residual_loss=args.require_taker_residual_loss,
+        max_latest_taker_residual_loss_fraction=args.max_latest_taker_residual_loss_fraction,
     )
     result = evaluate_rescue_stress(quotes, cfg)
     if args.out:
@@ -94,6 +98,12 @@ def _markdown(result: dict[str, Any]) -> str:
         f"| Taker rescue feasible rate | {_pct(m.get('taker_rescue_feasible_rate'))} |",
         f"| Taker rescue min pair edge/share | {_num(m.get('taker_rescue_min_pair_edge_per_share'), 4)} |",
         f"| Taker rescue min depth fraction | {_num(m.get('taker_rescue_min_depth_fraction'), 2)} |",
+        f"| Partial taker-rescue feasible rate | {_pct(m.get('taker_partial_rescue_feasible_rate'))} |",
+        f"| Size-weighted rescued fraction | {_pct(m.get('taker_size_weighted_rescue_fraction'))} |",
+        f"| Loss-weighted rescued fraction | {_pct(m.get('taker_loss_weighted_rescue_fraction'))} |",
+        f"| p05 rescued size fraction | {_pct(m.get('taker_rescued_size_fraction_p05'))} |",
+        f"| Latest partial-rescue residual loss | {_money(m.get('latest_taker_residual_loss_to_zero'))} ({_pct(m.get('latest_taker_residual_loss_fraction'))}) |",
+        f"| Latest residual immediate-exit loss | {_money(m.get('latest_taker_residual_immediate_exit_loss'))} ({_pct(m.get('latest_taker_residual_immediate_exit_loss_fraction'))}) |",
         "",
         "| Gate | Passed |",
         "|---|:---:|",
