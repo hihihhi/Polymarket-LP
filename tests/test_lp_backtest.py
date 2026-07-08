@@ -40,6 +40,7 @@ from polymarket_lp.governed_config import apply_risk_governor_to_lp_config
 from polymarket_lp.hedge import HedgeFeasibilityConfig, evaluate_hedge_feasibility
 from polymarket_lp.rescue_stress import RescueStressConfig, evaluate_rescue_stress
 from polymarket_lp.depth_gate import DepthReadinessConfig, evaluate_depth_readiness
+from polymarket_lp.candidate_leaderboard import CandidateEvidence, build_candidate_leaderboard
 from scripts.paper_replay import make_lp_config
 from scripts.update_target_status import _bootstrap_target_from_quotes, _capture_stress_grid, _json_safe
 from scripts.target_config_grid import SelectionConfig, _candidate_row
@@ -1799,3 +1800,64 @@ def test_hedge_feasibility_blocks_when_cap_or_slippage_fails() -> None:
     assert not result["gates"]["pair_lock_when_both_sides_fill_passed"]
     assert not result["gates"]["emergency_exit_slippage_cushion_passed"]
     assert not result["gates"]["configured_cap_tail_reduction_passed"]
+
+
+def test_candidate_leaderboard_prefers_depth_ready_then_residual_risk() -> None:
+    weak = {
+        "status": "depth_not_ready",
+        "metrics": {
+            "duration_hours": 1,
+            "quote_rows": 20,
+            "unique_markets_quoted": 4,
+            "income_p05_at_required_capture": 2000,
+            "taker_rescue_feasible_rate": 1,
+            "taker_size_weighted_rescue_fraction": 1,
+            "latest_taker_residual_loss_to_zero": 0,
+            "latest_taker_residual_loss_fraction": 0,
+        },
+        "gates": {
+            "depth_ready": False,
+            "income_p05_gate_passed": True,
+            "clob_quality_gate_passed": True,
+            "taker_rescue_rate_gate_passed": True,
+            "taker_pair_edge_gate_passed": True,
+            "taker_depth_gate_passed": True,
+            "taker_residual_loss_gate_passed": True,
+            "sample_hours_gate_passed": False,
+            "quote_rows_gate_passed": False,
+            "book_scenario_gate_passed": False,
+        },
+        "blockers": ["needs sample"],
+    }
+    ready = {
+        "status": "depth_ready",
+        "metrics": {
+            "duration_hours": 6,
+            "quote_rows": 30,
+            "unique_markets_quoted": 3,
+            "income_p05_at_required_capture": 1100,
+            "taker_rescue_feasible_rate": 0.9,
+            "taker_size_weighted_rescue_fraction": 0.99,
+            "latest_taker_residual_loss_to_zero": 5,
+            "latest_taker_residual_loss_fraction": 0.0025,
+        },
+        "gates": {
+            "depth_ready": True,
+            "income_p05_gate_passed": True,
+            "clob_quality_gate_passed": True,
+            "taker_rescue_rate_gate_passed": True,
+            "taker_pair_edge_gate_passed": True,
+            "taker_depth_gate_passed": True,
+            "taker_residual_loss_gate_passed": True,
+            "sample_hours_gate_passed": True,
+            "quote_rows_gate_passed": True,
+            "book_scenario_gate_passed": True,
+        },
+        "blockers": [],
+    }
+    result = build_candidate_leaderboard(
+        [CandidateEvidence("weak_short_sample", weak), CandidateEvidence("ready", ready)]
+    )
+    assert result["status"] == "public_paper_leader_depth_ready"
+    assert result["leader"]["name"] == "ready"
+    assert result["candidates"][1]["name"] == "weak_short_sample"
