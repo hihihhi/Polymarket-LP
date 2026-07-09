@@ -31,6 +31,7 @@ from polymarket_lp.paper import (
 )
 from polymarket_lp.target import TargetMonitorConfig, target_monitor_from_summary
 from polymarket_lp.telemetry import ExecutionTelemetryConfig, audit_execution_telemetry
+from polymarket_lp.lifecycle import LifecycleAuditConfig, audit_order_lifecycle
 from polymarket_lp.deployment_gate import DeploymentReadinessConfig, evaluate_deployment_readiness
 from polymarket_lp.capital_risk import (
     CapitalRiskStressConfig,
@@ -2808,3 +2809,66 @@ def test_drawdown_guard_blocks_oversized_active_orders() -> None:
     )
     assert result["status"] == "drawdown_guard_failed"
     assert not result["gates"]["active_order_gate_passed"]
+
+
+def test_lifecycle_audit_requires_signed_order_paid_reward_and_final_pnl() -> None:
+    events = pd.DataFrame(
+        [
+            {"timestamp": "2026-01-01T00:00:00Z", "client_order_id": "o1", "lifecycle_state": "book_snapshot"},
+            {"timestamp": "2026-01-01T00:00:01Z", "client_order_id": "o1", "lifecycle_state": "ranking_decision"},
+            {"timestamp": "2026-01-01T00:00:02Z", "client_order_id": "o1", "lifecycle_state": "quote_intent"},
+            {"timestamp": "2026-01-01T00:00:03Z", "client_order_id": "o1", "lifecycle_state": "risk_gate"},
+            {"timestamp": "2026-01-01T00:00:04Z", "client_order_id": "o1", "lifecycle_state": "sign"},
+            {"timestamp": "2026-01-01T00:00:05Z", "client_order_id": "o1", "lifecycle_state": "submit"},
+            {"timestamp": "2026-01-01T00:00:06Z", "client_order_id": "o1", "lifecycle_state": "ack"},
+            {"timestamp": "2026-01-01T00:00:07Z", "client_order_id": "o1", "lifecycle_state": "queue_estimate"},
+            {"timestamp": "2026-01-01T00:00:08Z", "client_order_id": "o1", "lifecycle_state": "resting"},
+            {"timestamp": "2026-01-01T00:01:00Z", "client_order_id": "o1", "lifecycle_state": "no_fill"},
+            {"timestamp": "2026-01-01T00:05:00Z", "client_order_id": "o1", "lifecycle_state": "cancel_request"},
+            {"timestamp": "2026-01-01T00:05:04Z", "client_order_id": "o1", "lifecycle_state": "cancel_confirm"},
+            {
+                "timestamp": "2026-01-01T00:06:00Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "reward_estimate",
+                "estimated_reward_usdc": 1.0,
+            },
+            {
+                "timestamp": "2026-01-02T00:00:00Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "reward_paid",
+                "paid_reward_usdc": 0.6,
+            },
+            {
+                "timestamp": "2026-01-02T00:00:01Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "final_pnl_attribution",
+                "final_pnl_usdc": 0.6,
+            },
+        ]
+    )
+    result = audit_order_lifecycle(events, LifecycleAuditConfig(min_reward_capture_rate=0.5))
+    assert result["status"] == "deployment_lifecycle_passed"
+    assert result["metrics"]["paid_reward_usdc"] == 0.6
+    assert result["metrics"]["reward_capture_rate"] == 0.6
+    assert result["gates"]["deployment_lifecycle_passed"]
+
+
+def test_lifecycle_audit_blocks_shadow_or_incomplete_evidence() -> None:
+    events = pd.DataFrame(
+        [
+            {"timestamp": "2026-01-01T00:00:00Z", "client_order_id": "o1", "lifecycle_state": "quote_intent"},
+            {"timestamp": "2026-01-01T00:00:05Z", "client_order_id": "o1", "lifecycle_state": "submit"},
+            {"timestamp": "2026-01-01T00:00:06Z", "client_order_id": "o1", "lifecycle_state": "ack"},
+            {
+                "timestamp": "2026-01-01T00:00:10Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "reward_estimate",
+                "estimated_reward_usdc": 1.0,
+            },
+        ]
+    )
+    result = audit_order_lifecycle(events)
+    assert result["status"] == "deployment_lifecycle_incomplete"
+    assert not result["gates"]["deployment_lifecycle_passed"]
+    assert not result["gates"]["paid_reward_passed"]
+    assert any("paid reward" in blocker for blocker in result["blockers"])
