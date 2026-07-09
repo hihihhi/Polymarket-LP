@@ -43,6 +43,7 @@ from polymarket_lp.reward_reconciliation import (
     reconcile_paid_rewards,
     reward_reconciliation_schema,
 )
+from polymarket_lp.compliance import ComplianceAvailabilityConfig, evaluate_compliance_availability
 from polymarket_lp.deployment_gate import DeploymentReadinessConfig, evaluate_deployment_readiness
 from polymarket_lp.capital_risk import (
     CapitalRiskStressConfig,
@@ -1002,6 +1003,49 @@ def test_execution_telemetry_audit_rejects_missing_paid_rewards() -> None:
     )
     assert not result["gates"]["reward_payment_present"]
     assert not result["gates"]["deployment_telemetry_passed"]
+
+
+def test_compliance_gate_blocks_endpoint_and_session_restrictions() -> None:
+    result = evaluate_compliance_availability(
+        {"blocked": True, "ip": "203.0.113.10", "country": "US", "region": "NY"},
+        ComplianceAvailabilityConfig(session_country_code="US"),
+    )
+
+    assert result["status"] == "new_order_blocked"
+    assert not result["gates"]["new_order_placement_allowed"]
+    assert "geoblock endpoint reports blocked" in result["blockers"]
+    assert "session/operator country is in new-order restricted set" in result["blockers"]
+    assert result["observed"]["payload_redacted"]["ip"] == "REDACTED"
+
+
+def test_compliance_gate_requires_legal_entity_and_api_clearance() -> None:
+    result = evaluate_compliance_availability(
+        {"blocked": False, "country": "GB", "region": "ENG"},
+        ComplianceAvailabilityConfig(session_country_code="GB"),
+    )
+
+    assert result["status"] == "new_order_not_cleared"
+    assert result["gates"]["geoblock_endpoint_clear"]
+    assert not result["gates"]["new_order_placement_allowed"]
+    assert "legal review not cleared" in result["blockers"]
+    assert "permitted entity/account not cleared" in result["blockers"]
+    assert "API terms/access not cleared" in result["blockers"]
+
+
+def test_compliance_gate_allows_only_after_all_clearance_proofs() -> None:
+    result = evaluate_compliance_availability(
+        {"blocked": False, "country": "GB", "region": "ENG"},
+        ComplianceAvailabilityConfig(
+            session_country_code="GB",
+            legal_review_cleared=True,
+            entity_account_cleared=True,
+            api_terms_cleared=True,
+        ),
+    )
+
+    assert result["status"] == "new_order_placement_allowed"
+    assert result["gates"]["new_order_placement_allowed"]
+    assert result["blockers"] == []
 
 
 def test_deployment_readiness_requires_sample_and_telemetry() -> None:
