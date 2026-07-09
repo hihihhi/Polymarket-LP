@@ -32,6 +32,17 @@ from polymarket_lp.paper import (
 from polymarket_lp.target import TargetMonitorConfig, target_monitor_from_summary
 from polymarket_lp.telemetry import ExecutionTelemetryConfig, audit_execution_telemetry
 from polymarket_lp.lifecycle import LifecycleAuditConfig, audit_order_lifecycle
+from polymarket_lp.lifecycle_ledger import (
+    append_lifecycle_event,
+    export_lifecycle_csv,
+    lifecycle_event_schema,
+    verify_lifecycle_ledger,
+)
+from polymarket_lp.reward_reconciliation import (
+    RewardReconciliationConfig,
+    reconcile_paid_rewards,
+    reward_reconciliation_schema,
+)
 from polymarket_lp.deployment_gate import DeploymentReadinessConfig, evaluate_deployment_readiness
 from polymarket_lp.capital_risk import (
     CapitalRiskStressConfig,
@@ -2872,3 +2883,81 @@ def test_lifecycle_audit_blocks_shadow_or_incomplete_evidence() -> None:
     assert not result["gates"]["deployment_lifecycle_passed"]
     assert not result["gates"]["paid_reward_passed"]
     assert any("paid reward" in blocker for blocker in result["blockers"])
+
+
+def test_lifecycle_ledger_hash_chain_and_csv_export(tmp_path) -> None:
+    ledger = tmp_path / "lifecycle.jsonl"
+    first = append_lifecycle_event(
+        ledger,
+        {
+            "timestamp": "2026-01-01T00:00:00Z",
+            "client_order_id": "o1",
+            "lifecycle_state": "book_snapshot",
+            "market_id": "m1",
+        },
+    )
+    second = append_lifecycle_event(
+        ledger,
+        {
+            "timestamp": "2026-01-01T00:00:01Z",
+            "client_order_id": "o1",
+            "lifecycle_state": "ranking_decision",
+            "rank_score": 1.23,
+        },
+    )
+    assert first["sequence"] == 0
+    assert second["sequence"] == 1
+    assert second["previous_event_hash"] == first["event_hash"]
+    verified = verify_lifecycle_ledger(ledger)
+    assert verified["status"] == "lifecycle_ledger_integrity_passed"
+    out_csv = export_lifecycle_csv(ledger, tmp_path / "lifecycle.csv")
+    assert pd.read_csv(out_csv)["lifecycle_state"].tolist() == ["book_snapshot", "ranking_decision"]
+    assert any(row["column"] == "paid_reward_usdc" for row in lifecycle_event_schema())
+
+
+def test_lifecycle_ledger_rejects_secret_like_keys(tmp_path) -> None:
+    with pytest.raises(ValueError, match="secret-like key"):
+        append_lifecycle_event(
+            tmp_path / "bad.jsonl",
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "sign",
+                "private_key": "do-not-log",
+            },
+        )
+
+
+def test_paid_reward_reconciliation_passes_and_blocks_missing_paid() -> None:
+    estimates = pd.DataFrame(
+        [
+            {
+                "reward_period_start": "2026-01-01T00:00:00Z",
+                "reward_period_end": "2026-01-02T00:00:00Z",
+                "market_id": "m1",
+                "condition_id": "c1",
+                "client_order_id": "o1",
+                "eligible_seconds": 300,
+                "estimated_reward_usdc": 10.0,
+            }
+        ]
+    )
+    paid = pd.DataFrame(
+        [
+            {
+                "reward_period_start": "2026-01-01T00:00:00Z",
+                "reward_period_end": "2026-01-02T00:00:00Z",
+                "market_id": "m1",
+                "condition_id": "c1",
+                "client_order_id": "o1",
+                "paid_reward_usdc": 6.0,
+            }
+        ]
+    )
+    ok = reconcile_paid_rewards(estimates, paid, RewardReconciliationConfig(require_client_order_match=True))
+    assert ok["status"] == "paid_reward_reconciliation_passed"
+    assert ok["metrics"]["reward_capture_rate"] == 0.6
+    missing = reconcile_paid_rewards(estimates, pd.DataFrame())
+    assert missing["status"] == "paid_reward_reconciliation_incomplete"
+    assert not missing["gates"]["paid_rewards_present"]
+    assert any(row["field"] == "paid_reward_usdc" for row in reward_reconciliation_schema())
