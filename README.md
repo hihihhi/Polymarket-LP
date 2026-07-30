@@ -1,236 +1,34 @@
 # Polymarket-LP
 
-Research toolkit for a managed-risk Polymarket LP/reward-farming portfolio.
+## One sentence
+A research toolkit for testing a managed-risk Polymarket liquidity-provider reward strategy without placing live orders.
 
-This repo is for **liquidity-provider reward farming**, not directional prediction betting. The core question is:
+## Result
 
-```text
-How much reward income do we earn per dollar of unpaired inventory risk?
-```
+**Synthetic result only — no live-fill proof.** The strategy and data-generation arguments in the command below produced `total_pnl_usdc = 122.63378371068302` in two deterministic reruns with separate output directories. Source: `docs/lp_synthetic_seed7_summary.csv:2`. Sample status: synthetic stress test; IS/OOS classification **unknown**; live status **unknown**.
 
-## Resume here
+![Seed-7 synthetic equity path](docs/lp_synthetic_seed7_equity.svg)
 
-Start with:
+## How it works
+- The backtest ranks markets by estimated reward density.
+- Volatility and jump gates determine quote eligibility.
+- Synthetic execution simulates two-sided quotes, midpoint-cross fill risk, and YES/NO inventory pairing.
+- Realized and mark-to-market accounting track inventory exits and drawdown.
+- Paper replay writes intended quotes from public snapshots only; it does not sign, submit, or cancel orders.
 
-```text
-docs/RESUME.md
-```
+## The interesting decision
+The strategy optimizes reward income per unit of unpaired inventory risk rather than gross rewards. It favors wide eligible quotes and hard inventory caps, accepting that the reported profile still has `0%` pair completion (`docs/RESULTS.md:51`) and therefore needs OOS validation before any capital is at risk.
 
-That file records the current strategy, current best synthetic benchmark, exact commands, implementation status, remaining gaps, pass/fail rules, and next build order.
-
-Core docs:
-
-```text
-docs/STRATEGY_V2_REWARD_DENSITY_RESCUE_LP.md  # main strategy spec
-docs/PAPER_RUN_AND_BACKTEST.md                # backtest + paper replay workflow
-docs/RESULTS.md                               # current synthetic result summary
-docs/METRICS_SPEC.md                          # full metric stack
-docs/RESUME.md                                # current handoff state
-```
-
-## Current status
-
-The repo includes an L0/L1-style backtest scaffold:
-
-- synthetic stress backtest for sanity checks;
-- snapshot replay backtest once point-in-time market/orderbook data is collected;
-- paper replay that writes intended quote rows from snapshots;
-- public live snapshot paper loop with a no-orders safety manifest;
-- paper quote outcome analytics against the next observed snapshot;
-- reward-share approximation using market reward pool, max spread, min size, quote distance, and competitor score;
-- reward-density ranking;
-- volatility and recent-jump gates;
-- paired YES/NO inventory accounting;
-- mark-to-market equity and drawdown metrics;
-- one-sided fill, pair completion, reward-to-loss, and inventory-risk metrics.
-
-It does **not** place live orders.
-
-## Install
-
+## Run it
 ```bash
 python -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install -e .[dev]
+python scripts/lp_backtest.py --synthetic --seed 7 --synthetic-days 14 --synthetic-markets 30 --quote-size 800 --quote-offset 0.035 --excluded-categories "" --active-capital-limit 1900 --max-unpaired-per-market 800 --max-total-unpaired 1200 --max-cluster-unpaired 600 --exit-loss-cents 0.05 --max-unpaired-minutes 90 --max-recent-vol 0.006 --max-recent-jump 0.025 --vol-quote-multiplier 0.5 --out-dir data/processed/income_density_wide
+pytest -q
 ```
 
-## Current refined synthetic benchmark
+For snapshot replay, use `python scripts/lp_backtest.py --snapshots data/raw/orderbook_snapshots.csv --out-dir data/processed/real_replay` after collecting point-in-time public inputs.
 
-This is the current best L0 synthetic profile. It is not live proof.
-
-```bash
-python scripts/lp_backtest.py \
-  --synthetic \
-  --quote-size 800 \
-  --quote-offset 0.035 \
-  --excluded-categories "" \
-  --active-capital-limit 1900 \
-  --max-unpaired-per-market 800 \
-  --max-total-unpaired 1200 \
-  --max-cluster-unpaired 600 \
-  --exit-loss-cents 0.05 \
-  --max-unpaired-minutes 90 \
-  --max-recent-vol 0.006 \
-  --max-recent-jump 0.025 \
-  --vol-quote-multiplier 0.5 \
-  --out-dir data/processed/income_density_wide
-```
-
-Latest benchmark summary:
-
-```text
-net PnL = +$134.22 over 14 days
-30-day equivalent = ~$287.61
-max MTM drawdown = -3.10%
-reward/loss = 4.21
-max open inventory = $330.97
-```
-
-## Run a simple synthetic sanity-check backtest
-
-The default run excludes `sports,crypto` categories because the first stress test showed those clusters dominated one-sided inventory losses.
-
-```bash
-python scripts/lp_backtest.py --synthetic --out-dir data/processed/synthetic_default
-```
-
-To include everything and prove the dangerous baseline, override the filter:
-
-```bash
-python scripts/lp_backtest.py --synthetic --excluded-categories "" --out-dir data/processed/synthetic_all_markets
-```
-
-Outputs:
-
-```text
-data/processed/synthetic_default/lp_summary.csv
-data/processed/synthetic_default/lp_equity_curve.csv
-data/processed/synthetic_default/lp_events.csv
-```
-
-## Sweep configs
-
-Use the sweep script to avoid trusting one arbitrary parameter set:
-
-```bash
-python scripts/sweep_lp_configs.py \
-  --synthetic \
-  --synthetic-days 7 \
-  --synthetic-markets 18 \
-  --out data/processed/lp_config_sweep.csv
-```
-
-The sweep ranks quote size, quote offset, inventory limits, exit loss, reward filters, and competition filters.
-
-## Paper replay
-
-After collecting point-in-time snapshots:
-
-```bash
-python scripts/paper_replay.py \
-  --snapshots data/raw/orderbook_snapshots.csv \
-  --out data/processed/paper_quotes.csv
-```
-
-This writes intended quotes only. It does not sign orders, submit orders, cancel orders, or touch private keys.
-
-To collect public live snapshots and paper quote intents without placing orders:
-
-```bash
-python scripts/paper_replay.py \
-  --live \
-  --iterations 288 \
-  --interval-seconds 300 \
-  --snapshot-out data/raw/live_lp_snapshots.csv \
-  --out data/processed/live_lp_quotes.csv \
-  --manifest-out data/raw/live_lp_paper_manifest.json
-```
-
-Then analyze the paper quotes against the next observed snapshot:
-
-```bash
-python scripts/paper_analyze.py \
-  --snapshots data/raw/live_lp_snapshots.csv \
-  --quotes data/processed/live_lp_quotes.csv \
-  --out-dir data/processed/live_lp_paper_analysis
-```
-
-This analysis reports fill-proxy, stale-fill, pending-quote, active-notional, and mark-to-next diagnostics. It is still paper analytics, not executed fill proof.
-
-## Run with real snapshots
-
-```bash
-python scripts/lp_backtest.py \
-  --snapshots data/raw/orderbook_snapshots.csv \
-  --out-dir data/processed/real_replay
-```
-
-Required snapshot columns:
-
-```text
-timestamp, condition_id, reward_daily, max_incentive_spread, min_incentive_size
-```
-
-Plus either:
-
-```text
-yes_mid
-```
-
-or:
-
-```text
-yes_best_bid, yes_best_ask
-```
-
-Recommended optional columns:
-
-```text
-market_id, event_id, category, cluster,
-no_mid, no_best_bid, no_best_ask,
-market_competitiveness, competitor_score
-```
-
-`max_incentive_spread` should be in price units, e.g. `0.04` for ±4c.
-
-## Backtest assumptions
-
-The backtest is conservative and intentionally imperfect until full WebSocket quote history exists:
-
-- filter out high-volatility categories/clusters by default, currently `sports,crypto`;
-- quote both YES and NO bids at `mid - quote_offset`;
-- enforce complete-set safety: `YES bid + NO bid <= 1 - safety_margin`;
-- rank markets by estimated reward density;
-- estimate reward share from an approximate quadratic order score;
-- apply volatility and recent-jump gates;
-- simulate toxic fills when the next midpoint moves through our bid;
-- pair opposite YES/NO inventory into complete sets when possible;
-- exit stale or adverse naked inventory according to risk limits;
-- report both realized and mark-to-market drawdown.
-
-## Important limitation
-
-Historical `prices-history` is not enough for a reliable LP backtest. A serious test needs point-in-time orderbook snapshots, trades, reward config, and your own intended quotes/cancels. Treat synthetic results as stress tests only.
-
-## Key metrics
-
-The main acceptance metrics are:
-
-```text
-total_pnl_usdc
-max_drawdown_mtm_pct
-reward_to_trading_loss_ratio
-pair_completion_ratio_shares
-max_open_inventory_notional
-avg_open_inventory_notional
-reward_per_dollar_avg_inventory
-pnl_per_dollar_avg_inventory
-stale_fill_rate
-pending_quote_rate
-fill_proxy_rate
-profit_factor_trading_only
-daily_sortino_mtm
-bad_day_p95_return
-```
-
-See `docs/METRICS_SPEC.md` for the full metric stack.
+## Status
+Active research/backtest scaffold. Live orders are intentionally unsupported; OOS results, actual fills, cancels, reward payouts, and live execution evidence are **unknown**. Do not treat this repository as trading advice or a proven live strategy.
