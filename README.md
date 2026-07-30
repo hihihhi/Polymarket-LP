@@ -5,7 +5,7 @@ A Python simulator and paper-research toolkit for testing risk-gated Polymarket 
 ## Status & honesty
 
 - Status: active synthetic and paper-research scaffold; live orders are intentionally unsupported.
-- Headline result ? **SYNTHETIC (seed 7)**: `total_pnl_usdc = 122.63378371068302`; **SYNTHETIC (seed 7)**: `pair_completion_ratio_shares = 0.0 (0%)`. Source: `docs/lp_synthetic_seed7_summary.csv:2`.
+- Headline result - **SYNTHETIC (seed 7)**: `total_pnl_usdc = 122.63378371068302`; **SYNTHETIC (seed 7)**: `pair_completion_ratio_shares = 0.0 (0%)`. Source: `docs/lp_synthetic_seed7_summary.csv:2`.
 - **SYNTHETIC (seed 7)**: `total_reward_usdc = 163.42548863585822`, `total_inventory_exit_pnl_usdc = -40.79170492517545`, and `max_drawdown_mtm_usdc = -65.50954640844861`. Source: `docs/lp_synthetic_seed7_summary.csv:2`.
 - In-sample/out-of-sample classification: UNKNOWN. Live fills, cancellations, reward payouts, execution latency, and profitability: UNKNOWN.
 - License file: UNKNOWN (no `LICENSE` file is present). Project metadata declares MIT in `pyproject.toml`; no standalone license is added here.
@@ -27,6 +27,7 @@ Quotes are ranked by reward density subject to bounded unpaired-inventory risk r
 - The committed unrounded summary is `docs/lp_synthetic_seed7_summary.csv:2`; `docs/RESULTS.md` records its deterministic rerun hash and states that its IS/OOS classification is UNKNOWN.
 - The chart below is the committed synthetic equity artifact `docs/lp_synthetic_seed7_equity.svg`. Its embedded description identifies the README synthetic command as its generation procedure; no live market data is represented.
 - Synthetic generator defaults are implemented in `polymarket_lp/lp_backtest.py:make_synthetic_snapshots`; the exact benchmark parameters are in the command below.
+- Repository-authored code provenance: UNKNOWN from tracked files alone. Adapted or upstream code provenance: UNKNOWN from tracked files alone. Polymarket, CLOB/Gamma, and other platform/API implementations are external services, not source code included or claimed as authored by this repository.
 
 ![SYNTHETIC (seed 7) equity path](docs/lp_synthetic_seed7_equity.svg)
 
