@@ -5,6 +5,7 @@ This is a local paper-research helper. It reads public snapshot/quote CSVs,
 recomputes paper diagnostics, evaluates the target gate, and writes a compact
 Markdown/JSON status. It never signs, submits, cancels, or inspects orders.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,8 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 from polymarket_lp.lp_backtest import load_snapshots
 from polymarket_lp.paper import PaperAnalysisConfig, run_paper_analysis_to_files
@@ -31,9 +32,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--snapshots", required=True)
     p.add_argument("--quotes", required=True)
     p.add_argument("--out-dir", default="data/processed/target_status")
-    p.add_argument("--history-csv", default="", help="Optional CSV to append one compact status row per refresh")
-    p.add_argument("--report", default="", help="Optional Markdown report to append latest status to")
-    p.add_argument("--downloads-copy", default="", help="Optional path to copy the report/status Markdown to")
+    p.add_argument(
+        "--history-csv",
+        default="",
+        help="Optional CSV to append one compact status row per refresh",
+    )
+    p.add_argument(
+        "--report",
+        default="",
+        help="Optional Markdown report to append latest status to",
+    )
+    p.add_argument(
+        "--downloads-copy",
+        default="",
+        help="Optional path to copy the report/status Markdown to",
+    )
     p.add_argument("--initial-capital", type=float, default=2000.0)
     p.add_argument("--target-monthly", type=float, default=1000.0)
     p.add_argument("--reward-to-loss-haircut", type=float, default=8.0)
@@ -51,7 +64,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--bootstrap-seed", type=int, default=7)
     p.add_argument("--bootstrap-block-size", type=int, default=1)
     p.add_argument("--bootstrap-capture-rate", type=float, default=1.0)
-    p.add_argument("--bootstrap-capture-rates", default="", help="Optional comma-separated capture stress rates, e.g. 0.35,0.5,0.75")
+    p.add_argument(
+        "--bootstrap-capture-rates",
+        default="",
+        help="Optional comma-separated capture stress rates, e.g. 0.35,0.5,0.75",
+    )
     p.add_argument("--bootstrap-min-target-margin", type=float, default=1.0)
     return p.parse_args()
 
@@ -121,7 +138,10 @@ def main() -> None:
         "capture_stress_grid": capture_stress,
         "safety": "paper analytics only; no private keys, order signing, order submission, or cancellation",
     }
-    (out / "target_status.json").write_text(json.dumps(_json_safe(payload), indent=2, default=str, allow_nan=False) + "\n", encoding="utf-8")
+    (out / "target_status.json").write_text(
+        json.dumps(_json_safe(payload), indent=2, default=str, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
     if args.history_csv:
         _append_history(Path(args.history_csv), payload)
     markdown = _markdown(payload)
@@ -136,7 +156,16 @@ def main() -> None:
             shutil.copyfile(report, args.downloads_copy)
     elif args.downloads_copy:
         shutil.copyfile(status_md, args.downloads_copy)
-    print(json.dumps({"status_json": str(out / "target_status.json"), "status_md": str(status_md), "status": monitor["status"]}, indent=2))
+    print(
+        json.dumps(
+            {
+                "status_json": str(out / "target_status.json"),
+                "status_md": str(status_md),
+                "status": monitor["status"],
+            },
+            indent=2,
+        )
+    )
 
 
 def _append_history(path: Path, payload: dict[str, object]) -> None:
@@ -153,7 +182,9 @@ def _append_history(path: Path, payload: dict[str, object]) -> None:
         "duration_hours": monitor["input"]["duration_hours"],  # type: ignore[index]
         "quote_rows": monitor["input"]["quote_rows"],  # type: ignore[index]
         "unique_markets_quoted": monitor["input"]["unique_markets_quoted"],  # type: ignore[index]
-        "estimated_reward_accrual_usdc": monitor["input"]["estimated_reward_accrual_usdc"],  # type: ignore[index]
+        "estimated_reward_accrual_usdc": monitor["input"][
+            "estimated_reward_accrual_usdc"
+        ],  # type: ignore[index]
         "gross_reward_monthly": target["gross_reward_monthly"],
         "net_monthly_after_loss_haircut": target["net_monthly_after_loss_haircut"],
         "capture_needed_for_target": target["capture_needed_for_target"],
@@ -163,7 +194,9 @@ def _append_history(path: Path, payload: dict[str, object]) -> None:
         "stale_fill_rate": paper.get("stale_fill_rate"),
         "pending_quote_rate": paper.get("pending_quote_rate"),
         "raw_pending_quote_rate": paper.get("raw_pending_quote_rate"),
-        "right_censored_pending_quote_rate": paper.get("right_censored_pending_quote_rate"),
+        "right_censored_pending_quote_rate": paper.get(
+            "right_censored_pending_quote_rate"
+        ),
         "evaluable_quote_rows": paper.get("evaluable_quote_rows"),
         "max_active_pair_notional": monitor["input"]["max_active_pair_notional"],  # type: ignore[index]
         "density_gate_passed": gates["density_gate_passed"],
@@ -181,11 +214,19 @@ def _append_history(path: Path, payload: dict[str, object]) -> None:
             {
                 "bootstrap_intervals": bootstrap.get("intervals"),
                 "bootstrap_net_monthly_p05": bootstrap.get("net_monthly_p05"),
-                "bootstrap_target_hit_probability": bootstrap.get("target_hit_probability"),
-                "bootstrap_p05_target_gate_passed": bootstrap.get("p05_target_gate_passed"),
+                "bootstrap_target_hit_probability": bootstrap.get(
+                    "target_hit_probability"
+                ),
+                "bootstrap_p05_target_gate_passed": bootstrap.get(
+                    "p05_target_gate_passed"
+                ),
                 "bootstrap_capture_rate": bootstrap.get("capture_rate"),
-                "bootstrap_captured_net_monthly_p05": bootstrap.get("captured_net_monthly_p05"),
-                "bootstrap_captured_p05_target_gate_passed": bootstrap.get("captured_p05_target_gate_passed"),
+                "bootstrap_captured_net_monthly_p05": bootstrap.get(
+                    "captured_net_monthly_p05"
+                ),
+                "bootstrap_captured_p05_target_gate_passed": bootstrap.get(
+                    "captured_p05_target_gate_passed"
+                ),
             }
         )
     stress = payload.get("capture_stress_grid")
@@ -193,8 +234,12 @@ def _append_history(path: Path, payload: dict[str, object]) -> None:
         for item in stress:
             if isinstance(item, dict):
                 label = str(item.get("capture_rate", "")).replace(".", "p")
-                row[f"capture_{label}_p05_net_monthly"] = item.get("captured_net_monthly_p05")
-                row[f"capture_{label}_target_gate_passed"] = item.get("target_gate_passed")
+                row[f"capture_{label}_p05_net_monthly"] = item.get(
+                    "captured_net_monthly_p05"
+                )
+                row[f"capture_{label}_target_gate_passed"] = item.get(
+                    "target_gate_passed"
+                )
     path.parent.mkdir(parents=True, exist_ok=True)
     frame = pd.DataFrame([row])
     if not path.exists() or path.stat().st_size == 0:
@@ -207,7 +252,10 @@ def _append_history(path: Path, payload: dict[str, object]) -> None:
         frame.to_csv(path, mode="a", header=False, index=False)
         return
     all_cols = list(dict.fromkeys(existing_cols + new_cols))
-    pd.concat([existing.reindex(columns=all_cols), frame.reindex(columns=all_cols)], ignore_index=True).to_csv(path, index=False)
+    pd.concat(
+        [existing.reindex(columns=all_cols), frame.reindex(columns=all_cols)],
+        ignore_index=True,
+    ).to_csv(path, index=False)
 
 
 def _markdown(payload: dict[str, object]) -> str:
@@ -224,14 +272,35 @@ def _markdown(payload: dict[str, object]) -> str:
         ("Quote rows", str(monitor["input"]["quote_rows"])),  # type: ignore[index]
         ("Unique markets quoted", str(monitor["input"]["unique_markets_quoted"])),  # type: ignore[index]
         ("Gross monthly pace", _money(target["gross_reward_monthly"])),
-        ("Net monthly after loss haircut", _money(target["net_monthly_after_loss_haircut"])),
+        (
+            "Net monthly after loss haircut",
+            _money(target["net_monthly_after_loss_haircut"]),
+        ),
         ("Capture needed for target", _pct(target["capture_needed_for_target"])),
-        ("Observed reward density/day", _pct(target["observed_reward_density_per_day"])),
-        ("Required reward density/day", _pct(target["required_reward_density_per_day"])),
-        ("Max active pair notional", _money(monitor["input"]["max_active_pair_notional"])),  # type: ignore[index]
-        ("Fill/stale/evaluable-pending proxy", f"{_pct(paper.get('fill_proxy_rate'))} / {_pct(paper.get('stale_fill_rate'))} / {_pct(paper.get('pending_quote_rate'))}"),
-        ("Raw/right-censored pending", f"{_pct(paper.get('raw_pending_quote_rate'))} / {_pct(paper.get('right_censored_pending_quote_rate'))}"),
-        ("Density/capture/risk/diversification/notional gates", f"{gates['density_gate_passed']} / {gates['capture_gate_passed']} / {gates['risk_proxy_gate_passed']} / {gates['diversification_gate_passed']} / {gates['active_notional_gate_passed']}"),
+        (
+            "Observed reward density/day",
+            _pct(target["observed_reward_density_per_day"]),
+        ),
+        (
+            "Required reward density/day",
+            _pct(target["required_reward_density_per_day"]),
+        ),
+        (
+            "Max active pair notional",
+            _money(monitor["input"]["max_active_pair_notional"]),
+        ),  # type: ignore[index]
+        (
+            "Fill/stale/evaluable-pending proxy",
+            f"{_pct(paper.get('fill_proxy_rate'))} / {_pct(paper.get('stale_fill_rate'))} / {_pct(paper.get('pending_quote_rate'))}",
+        ),
+        (
+            "Raw/right-censored pending",
+            f"{_pct(paper.get('raw_pending_quote_rate'))} / {_pct(paper.get('right_censored_pending_quote_rate'))}",
+        ),
+        (
+            "Density/capture/risk/diversification/notional gates",
+            f"{gates['density_gate_passed']} / {gates['capture_gate_passed']} / {gates['risk_proxy_gate_passed']} / {gates['diversification_gate_passed']} / {gates['active_notional_gate_passed']}",
+        ),
         ("Deployment proof", str(gates["deployment_proof_passed"])),
         ("Monitor status", str(monitor["status"])),
     ]
@@ -241,11 +310,23 @@ def _markdown(payload: dict[str, object]) -> str:
             [
                 ("Bootstrap intervals", str(bootstrap.get("intervals"))),
                 ("Bootstrap net monthly p05", _money(bootstrap.get("net_monthly_p05"))),
-                ("Bootstrap target-hit probability", _pct(bootstrap.get("target_hit_probability"))),
-                ("Bootstrap p05 target gate", str(bootstrap.get("p05_target_gate_passed"))),
+                (
+                    "Bootstrap target-hit probability",
+                    _pct(bootstrap.get("target_hit_probability")),
+                ),
+                (
+                    "Bootstrap p05 target gate",
+                    str(bootstrap.get("p05_target_gate_passed")),
+                ),
                 ("Bootstrap capture stress", _pct(bootstrap.get("capture_rate"))),
-                ("Bootstrap captured p05 net monthly", _money(bootstrap.get("captured_net_monthly_p05"))),
-                ("Bootstrap captured p05 target gate", str(bootstrap.get("captured_p05_target_gate_passed"))),
+                (
+                    "Bootstrap captured p05 net monthly",
+                    _money(bootstrap.get("captured_net_monthly_p05")),
+                ),
+                (
+                    "Bootstrap captured p05 target gate",
+                    str(bootstrap.get("captured_p05_target_gate_passed")),
+                ),
             ]
         )
     stress = payload.get("capture_stress_grid")
@@ -323,7 +404,11 @@ def _capture_stress_grid(
     target_monthly_usdc: float,
     min_target_margin: float,
 ) -> list[dict[str, object]]:
-    if not capture_rates or not bootstrap.get("enabled") or "net_monthly_p05" not in bootstrap:
+    if (
+        not capture_rates
+        or not bootstrap.get("enabled")
+        or "net_monthly_p05" not in bootstrap
+    ):
         return []
     p05 = float(bootstrap["net_monthly_p05"])
     threshold = float(target_monthly_usdc) * max(0.0, float(min_target_margin))
@@ -364,23 +449,45 @@ def _bootstrap_target_from_quotes(
         return {"enabled": False}
     capture_rate = max(0.0, min(1.0, float(capture_rate)))
     min_target_margin = max(0.0, float(min_target_margin))
-    required = {"timestamp", "condition_id", "reward_density_per_day", "active_order_notional_pair"}
+    required = {
+        "timestamp",
+        "condition_id",
+        "reward_density_per_day",
+        "active_order_notional_pair",
+    }
     if quotes.empty or not required.issubset(quotes.columns):
         return {"enabled": True, "error": "missing_quote_columns", "intervals": 0}
 
     pair = quotes.copy()
     pair["timestamp"] = pd.to_datetime(pair["timestamp"], utc=True, errors="coerce")
     pair["condition_id"] = pair["condition_id"].astype(str)
-    pair["reward_density_per_day"] = pd.to_numeric(pair["reward_density_per_day"], errors="coerce")
-    pair["active_order_notional_pair"] = pd.to_numeric(pair["active_order_notional_pair"], errors="coerce")
-    pair = pair.dropna(subset=["timestamp", "condition_id", "reward_density_per_day", "active_order_notional_pair"])
-    pair = pair.drop_duplicates(["timestamp", "condition_id"]).sort_values(["condition_id", "timestamp"])
+    pair["reward_density_per_day"] = pd.to_numeric(
+        pair["reward_density_per_day"], errors="coerce"
+    )
+    pair["active_order_notional_pair"] = pd.to_numeric(
+        pair["active_order_notional_pair"], errors="coerce"
+    )
+    pair = pair.dropna(
+        subset=[
+            "timestamp",
+            "condition_id",
+            "reward_density_per_day",
+            "active_order_notional_pair",
+        ]
+    )
+    pair = pair.drop_duplicates(["timestamp", "condition_id"]).sort_values(
+        ["condition_id", "timestamp"]
+    )
     if pair.empty:
         return {"enabled": True, "error": "empty_quote_pairs", "intervals": 0}
 
     pair["next_ts"] = pair.groupby("condition_id", sort=False)["timestamp"].shift(-1)
     gap = (pair["next_ts"] - pair["timestamp"]).dt.total_seconds()
-    pair["gap_seconds"] = pd.to_numeric(gap, errors="coerce").clip(lower=0, upper=max_reward_gap_seconds).fillna(0)
+    pair["gap_seconds"] = (
+        pd.to_numeric(gap, errors="coerce")
+        .clip(lower=0, upper=max_reward_gap_seconds)
+        .fillna(0)
+    )
     pair["reward_usdc"] = (
         pair["reward_density_per_day"].clip(lower=0)
         * pair["active_order_notional_pair"].clip(lower=0)
@@ -401,7 +508,11 @@ def _bootstrap_target_from_quotes(
     rng = np.random.default_rng(seed)
     reward = interval["reward_usdc"].to_numpy(dtype=float)
     gap_seconds = interval["gap_seconds"].to_numpy(dtype=float)
-    net_fraction = max(0.0, 1.0 - 1.0 / cfg.reward_to_loss_haircut) if cfg.reward_to_loss_haircut > 0 else 0.0
+    net_fraction = (
+        max(0.0, 1.0 - 1.0 / cfg.reward_to_loss_haircut)
+        if cfg.reward_to_loss_haircut > 0
+        else 0.0
+    )
     monthly_scale = 86_400.0 * cfg.days_per_month
     samples = []
     hit_count = 0
@@ -415,14 +526,18 @@ def _bootstrap_target_from_quotes(
         sample_seconds = float(gap_seconds[idx].sum())
         if sample_seconds <= 0:
             continue
-        net_monthly = float(reward[idx].sum() / sample_seconds * monthly_scale * net_fraction)
+        net_monthly = float(
+            reward[idx].sum() / sample_seconds * monthly_scale * net_fraction
+        )
         samples.append(net_monthly)
         if net_monthly >= cfg.target_monthly_usdc:
             hit_count += 1
     if not samples:
         return {"enabled": True, "error": "empty_bootstrap_samples", "intervals": n}
     values = np.array(samples, dtype=float)
-    observed_net = float(reward.sum() / gap_seconds.sum() * monthly_scale * net_fraction)
+    observed_net = float(
+        reward.sum() / gap_seconds.sum() * monthly_scale * net_fraction
+    )
     p05 = float(np.quantile(values, 0.05))
     captured_p05 = p05 * capture_rate
     target_threshold = cfg.target_monthly_usdc * min_target_margin

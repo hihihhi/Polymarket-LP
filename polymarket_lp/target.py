@@ -29,7 +29,9 @@ class TargetMonitorConfig:
     paid_reward_verified: bool = False
 
 
-def target_monitor_from_summary(summary: dict[str, Any], cfg: TargetMonitorConfig | None = None) -> dict[str, Any]:
+def target_monitor_from_summary(
+    summary: dict[str, Any], cfg: TargetMonitorConfig | None = None
+) -> dict[str, Any]:
     """Evaluate whether a paper LP slice is rich enough for a monthly target.
 
     ``summary`` is the JSON emitted by ``paper_analyze.py``. The output is a
@@ -48,22 +50,47 @@ def target_monitor_from_summary(summary: dict[str, Any], cfg: TargetMonitorConfi
     quote_rows = int(_to_float(summary.get("quote_rows"), 0.0))
     unique_markets = int(_to_float(summary.get("unique_markets_quoted"), 1.0))
 
-    gross_reward_per_day = estimated_reward / duration_hours * 24.0 if duration_hours > 0 else math.nan
-    gross_reward_monthly = gross_reward_per_day * cfg.days_per_month if math.isfinite(gross_reward_per_day) else math.nan
-    observed_density_per_day = gross_reward_per_day / avg_active if avg_active > 0 and math.isfinite(gross_reward_per_day) else math.nan
+    gross_reward_per_day = (
+        estimated_reward / duration_hours * 24.0 if duration_hours > 0 else math.nan
+    )
+    gross_reward_monthly = (
+        gross_reward_per_day * cfg.days_per_month
+        if math.isfinite(gross_reward_per_day)
+        else math.nan
+    )
+    observed_density_per_day = (
+        gross_reward_per_day / avg_active
+        if avg_active > 0 and math.isfinite(gross_reward_per_day)
+        else math.nan
+    )
 
     net_fraction_after_loss = _net_fraction_after_loss(cfg.reward_to_loss_haircut)
-    required_gross_reward_per_day = (cfg.target_monthly_usdc / cfg.days_per_month) / max(net_fraction_after_loss, 1e-12)
-    required_density_per_day = required_gross_reward_per_day / avg_active if avg_active > 0 else math.nan
-    net_monthly_after_loss = gross_reward_monthly * net_fraction_after_loss if math.isfinite(gross_reward_monthly) else math.nan
-    capture_needed_for_target = cfg.target_monthly_usdc / net_monthly_after_loss if net_monthly_after_loss > 0 else math.inf
+    required_gross_reward_per_day = (
+        cfg.target_monthly_usdc / cfg.days_per_month
+    ) / max(net_fraction_after_loss, 1e-12)
+    required_density_per_day = (
+        required_gross_reward_per_day / avg_active if avg_active > 0 else math.nan
+    )
+    net_monthly_after_loss = (
+        gross_reward_monthly * net_fraction_after_loss
+        if math.isfinite(gross_reward_monthly)
+        else math.nan
+    )
+    capture_needed_for_target = (
+        cfg.target_monthly_usdc / net_monthly_after_loss
+        if net_monthly_after_loss > 0
+        else math.inf
+    )
 
     density_gate_passed = bool(
         math.isfinite(observed_density_per_day)
         and math.isfinite(required_density_per_day)
         and observed_density_per_day >= required_density_per_day
     )
-    capture_gate_passed = bool(math.isfinite(capture_needed_for_target) and capture_needed_for_target <= cfg.min_capture_margin)
+    capture_gate_passed = bool(
+        math.isfinite(capture_needed_for_target)
+        and capture_needed_for_target <= cfg.min_capture_margin
+    )
     risk_proxy_gate_passed = bool(
         fill_proxy <= cfg.max_fill_proxy_rate
         and stale_fill <= cfg.max_stale_fill_rate
@@ -104,7 +131,10 @@ def target_monitor_from_summary(summary: dict[str, Any], cfg: TargetMonitorConfi
             "required_gross_reward_per_day": required_gross_reward_per_day,
             "required_reward_density_per_day": required_density_per_day,
             "capture_needed_for_target": capture_needed_for_target,
-            "target_return_on_capital_monthly": cfg.target_monthly_usdc / cfg.initial_capital if cfg.initial_capital else math.nan,
+            "target_return_on_capital_monthly": cfg.target_monthly_usdc
+            / cfg.initial_capital
+            if cfg.initial_capital
+            else math.nan,
         },
         "gates": {
             "density_gate_passed": density_gate_passed,

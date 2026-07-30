@@ -42,8 +42,14 @@ def evaluate_risk_governor(
     selected_income = _num(selected.get("captured_net_monthly_p05"))
     packet_income_p05 = _num(packet_income.get("p05_monthly_50pct_capture"))
     governing_income = _finite_min(selected_income, packet_income_p05)
-    active_notional = _num(packet_risk.get("max_active_pair_notional"), _num(selected.get("avg_active_pair_notional")))
-    cash_reserve_fraction = _num(packet_risk.get("cash_reserve_fraction"), _num(selected.get("cash_reserve_fraction")))
+    active_notional = _num(
+        packet_risk.get("max_active_pair_notional"),
+        _num(selected.get("avg_active_pair_notional")),
+    )
+    cash_reserve_fraction = _num(
+        packet_risk.get("cash_reserve_fraction"),
+        _num(selected.get("cash_reserve_fraction")),
+    )
     unhedged_loss = _num(
         packet_risk.get("all_active_unhedged_one_side_loss_to_zero"),
         _num(selected.get("unhedged_loss_to_zero")),
@@ -65,29 +71,44 @@ def evaluate_risk_governor(
         "cash_reserve": _ratio(max_active_by_cash, active_notional),
         "unhedged_loss": _ratio(max_unhedged_loss, unhedged_loss),
         "configured_cap_loss": _ratio(max_configured_loss, configured_cap_loss),
-        "configured_cap_recovery": _ratio(max_configured_loss_by_recovery, configured_cap_loss),
+        "configured_cap_recovery": _ratio(
+            max_configured_loss_by_recovery, configured_cap_loss
+        ),
     }
     raw_scale = min([1.0, *[v for v in scale_limits.values() if math.isfinite(v)]])
     recommended_scale = max(0.0, min(1.0, raw_scale))
-    recommended_qsize = math.floor(selected_qsize * recommended_scale) if math.isfinite(selected_qsize) else math.nan
+    recommended_qsize = (
+        math.floor(selected_qsize * recommended_scale)
+        if math.isfinite(selected_qsize)
+        else math.nan
+    )
     scale_viable = recommended_scale >= cfg.min_sizing_scale
 
     gates = {
-        "allocation_selected": allocation_selection.get("status") == "allocation_selected",
-        "income_gate_passed": governing_income >= cfg.target_monthly_usdc * cfg.min_income_margin,
-        "cash_reserve_gate_passed": cash_reserve_fraction >= cfg.min_cash_reserve_fraction,
-        "unhedged_loss_gate_passed": (unhedged_loss / cfg.initial_capital) <= cfg.max_unhedged_loss_fraction
+        "allocation_selected": allocation_selection.get("status")
+        == "allocation_selected",
+        "income_gate_passed": governing_income
+        >= cfg.target_monthly_usdc * cfg.min_income_margin,
+        "cash_reserve_gate_passed": cash_reserve_fraction
+        >= cfg.min_cash_reserve_fraction,
+        "unhedged_loss_gate_passed": (unhedged_loss / cfg.initial_capital)
+        <= cfg.max_unhedged_loss_fraction
         if cfg.initial_capital > 0
         else False,
-        "configured_cap_loss_gate_passed": (configured_cap_loss / cfg.initial_capital) <= cfg.max_configured_cap_loss_fraction
+        "configured_cap_loss_gate_passed": (configured_cap_loss / cfg.initial_capital)
+        <= cfg.max_configured_cap_loss_fraction
         if cfg.initial_capital > 0
         else False,
-        "configured_cap_recovery_gate_passed": configured_cap_recovery_days <= cfg.max_configured_cap_recovery_days,
-        "sustainability_stress_passed": sustain.get("status") in {"sustainability_stress_passed", None},
+        "configured_cap_recovery_gate_passed": configured_cap_recovery_days
+        <= cfg.max_configured_cap_recovery_days,
+        "sustainability_stress_passed": sustain.get("status")
+        in {"sustainability_stress_passed", None},
         "sizing_scale_viable": scale_viable,
         "objective_proven": bool(objective.get("objective_proven", False)),
         "sample_24h_passed": bool(packet_gates.get("sample_24h_passed", False)),
-        "rolling_all_windows_passed": bool(packet_gates.get("rolling_all_windows_passed", False)),
+        "rolling_all_windows_passed": bool(
+            packet_gates.get("rolling_all_windows_passed", False)
+        ),
         "telemetry_passed": bool(packet_gates.get("telemetry_passed", False)),
         "deployment_ready": bool(packet_gates.get("deployment_ready", False)),
     }
@@ -167,7 +188,9 @@ def _finite_min(*values: float) -> float:
     return min(finite) if finite else math.nan
 
 
-def _blockers(gates: dict[str, bool], cfg: RiskGovernorConfig, deployment_allowed: bool) -> list[str]:
+def _blockers(
+    gates: dict[str, bool], cfg: RiskGovernorConfig, deployment_allowed: bool
+) -> list[str]:
     labels = {
         "allocation_selected": "no selected allocation",
         "income_gate_passed": f"50% p05 income below ${cfg.target_monthly_usdc:,.0f}",
@@ -178,7 +201,9 @@ def _blockers(gates: dict[str, bool], cfg: RiskGovernorConfig, deployment_allowe
         "sustainability_stress_passed": "sustainability stress failed",
         "sizing_scale_viable": f"required scale below {cfg.min_sizing_scale:.0%}; pause instead of trading",
     }
-    blockers = [message for gate, message in labels.items() if not gates.get(gate, False)]
+    blockers = [
+        message for gate, message in labels.items() if not gates.get(gate, False)
+    ]
     if not deployment_allowed:
         for gate, message in {
             "sample_24h_passed": "needs >=24h public-paper sample",

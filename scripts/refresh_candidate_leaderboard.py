@@ -6,6 +6,7 @@ CLOB rescue stress, and depth gates from public snapshot/quote CSVs, then ranks
 candidates with the reusable leaderboard module. It never signs, submits,
 cancels, or inspects orders.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,12 +24,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from polymarket_lp.candidate_leaderboard import (  # noqa: E402
+    CandidateEvidence,
+    build_candidate_leaderboard,
+)
 from polymarket_lp.capital_risk import (  # noqa: E402
     CapitalRiskStressConfig,
     config_from_lp_manifest,
     evaluate_capital_risk_stress,
 )
-from polymarket_lp.candidate_leaderboard import CandidateEvidence, build_candidate_leaderboard  # noqa: E402
 from polymarket_lp.drawdown_guard import (  # noqa: E402
     DrawdownGuardConfig,
     evaluate_drawdown_guard,
@@ -39,7 +43,12 @@ from polymarket_lp.lp_backtest import load_snapshots  # noqa: E402
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--candidate", action="append", required=True, help="NAME=background_manifest.json")
+    p.add_argument(
+        "--candidate",
+        action="append",
+        required=True,
+        help="NAME=background_manifest.json",
+    )
     p.add_argument("--out", required=True)
     p.add_argument("--markdown-out", required=True)
     p.add_argument("--work-dir", default="")
@@ -60,7 +69,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-taker-rescue-feasible-rate", type=float, default=0.80)
     p.add_argument("--min-taker-rescue-depth-fraction", type=float, default=1.0)
     p.add_argument("--min-taker-rescue-pair-edge-per-share", type=float, default=0.0)
-    p.add_argument("--max-latest-taker-residual-loss-fraction", type=float, default=0.05)
+    p.add_argument(
+        "--max-latest-taker-residual-loss-fraction", type=float, default=0.05
+    )
     p.add_argument("--max-mtm-drawdown-fraction", type=float, default=0.10)
     p.add_argument("--max-realized-drawdown-fraction", type=float, default=0.05)
     p.add_argument("--max-open-inventory-fraction", type=float, default=0.50)
@@ -76,8 +87,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-latest-markets", type=int, default=4)
     p.add_argument("--max-single-market-active-fraction", type=float, default=0.35)
     p.add_argument("--max-single-cluster-active-fraction", type=float, default=0.70)
-    p.add_argument("--max-single-market-unhedged-loss-fraction", type=float, default=0.20)
-    p.add_argument("--max-single-cluster-unhedged-loss-fraction", type=float, default=0.50)
+    p.add_argument(
+        "--max-single-market-unhedged-loss-fraction", type=float, default=0.20
+    )
+    p.add_argument(
+        "--max-single-cluster-unhedged-loss-fraction", type=float, default=0.50
+    )
     p.add_argument("--max-capture-needed-after-cap-loss", type=float, default=0.40)
     p.add_argument(
         "--allow-after-cap-target-shortfall",
@@ -99,7 +114,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    work_dir = Path(args.work_dir) if args.work_dir else Path(args.out).resolve().parent / "candidate_refresh"
+    work_dir = (
+        Path(args.work_dir)
+        if args.work_dir
+        else Path(args.out).resolve().parent / "candidate_refresh"
+    )
     work_dir.mkdir(parents=True, exist_ok=True)
     candidates: list[CandidateEvidence] = []
     refreshed: list[dict[str, Any]] = []
@@ -110,13 +129,19 @@ def main() -> None:
         background["_max_input_staleness_seconds"] = args.max_input_staleness_seconds
         candidate_dir = work_dir / _safe_name(name)
         try:
-            freshness_error = _input_staleness_error(background, args.max_input_staleness_seconds)
+            freshness_error = _input_staleness_error(
+                background, args.max_input_staleness_seconds
+            )
             if freshness_error:
                 raise SystemExit(freshness_error)
-            refreshed_paths = refresh_candidate(name, background, candidate_dir, args, seed=args.bootstrap_seed + index)
+            refreshed_paths = refresh_candidate(
+                name, background, candidate_dir, args, seed=args.bootstrap_seed + index
+            )
             gate = json.loads(refreshed_paths["gate"].read_text(encoding="utf-8-sig"))
             drawdown_guard = evaluate_candidate_drawdown(name, background, args)
-            capital_risk = evaluate_candidate_capital(name, background, refreshed_paths["target_status"], args)
+            capital_risk = evaluate_candidate_capital(
+                name, background, refreshed_paths["target_status"], args
+            )
             gate_path_text = str(refreshed_paths["gate"])
         except SystemExit as exc:
             message = str(exc)
@@ -145,11 +170,22 @@ def main() -> None:
     result["refreshed_candidates"] = refreshed
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(_json_safe(result), indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    out.write_text(
+        json.dumps(_json_safe(result), indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
     md = Path(args.markdown_out)
     md.parent.mkdir(parents=True, exist_ok=True)
     md.write_text(_markdown(result), encoding="utf-8")
-    print(json.dumps({"status": result["status"], "leader": result.get("leader", {}).get("name")}, indent=2))
+    print(
+        json.dumps(
+            {
+                "status": result["status"],
+                "leader": result.get("leader", {}).get("name"),
+            },
+            indent=2,
+        )
+    )
 
 
 def refresh_candidate(
@@ -271,7 +307,9 @@ def refresh_candidate(
     return {"gate": gate_json, "target_status": target_dir / "target_status.json"}
 
 
-def evaluate_candidate_drawdown(name: str, background: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+def evaluate_candidate_drawdown(
+    name: str, background: dict[str, Any], args: argparse.Namespace
+) -> dict[str, Any]:
     snapshot = _required_path(background, "snapshot", name)
     manifest = dict(background)
     manifest["_candidate_name"] = name
@@ -284,7 +322,9 @@ def evaluate_candidate_drawdown(name: str, background: dict[str, Any], args: arg
         max_active_order_fraction=args.max_active_order_fraction,
         min_reward_to_trading_loss_ratio=args.min_reward_to_trading_loss_ratio,
     )
-    return evaluate_drawdown_guard(load_snapshots(snapshot), lp_config_from_manifest(manifest), cfg)
+    return evaluate_drawdown_guard(
+        load_snapshots(snapshot), lp_config_from_manifest(manifest), cfg
+    )
 
 
 def evaluate_candidate_capital(
@@ -295,7 +335,9 @@ def evaluate_candidate_capital(
 ) -> dict[str, Any]:
     quotes = _required_path(background, "quotes", name)
     if not target_status.exists():
-        raise SystemExit(f"candidate {name!r} target status path does not exist: {target_status}")
+        raise SystemExit(
+            f"candidate {name!r} target status path does not exist: {target_status}"
+        )
     cfg = config_from_lp_manifest(
         background,
         CapitalRiskStressConfig(
@@ -320,7 +362,9 @@ def evaluate_candidate_capital(
         ),
     )
     target = json.loads(target_status.read_text(encoding="utf-8-sig"))
-    return evaluate_capital_risk_stress(pd.read_csv(quotes), target_status=target, cfg=cfg)
+    return evaluate_capital_risk_stress(
+        pd.read_csv(quotes), target_status=target, cfg=cfg
+    )
 
 
 def _pending_gate(message: str) -> dict[str, Any]:
@@ -392,7 +436,9 @@ def run(command: list[str], out_dir: Path) -> None:
     log = out_dir / "refresh_candidate_leaderboard.log"
     with log.open("a", encoding="utf-8") as handle:
         handle.write("$ " + " ".join(command) + "\n")
-        subprocess.run(command, cwd=ROOT, check=True, stdout=handle, stderr=subprocess.STDOUT)
+        subprocess.run(
+            command, cwd=ROOT, check=True, stdout=handle, stderr=subprocess.STDOUT
+        )
 
 
 def _required_path(background: dict[str, Any], key: str, name: str) -> Path:
@@ -415,7 +461,10 @@ def _split_named_path(item: str, flag: str) -> tuple[str, str]:
 
 
 def _safe_name(name: str) -> str:
-    return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name).strip("._") or "candidate"
+    return (
+        "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name).strip("._")
+        or "candidate"
+    )
 
 
 def _input_staleness_error(
@@ -451,13 +500,18 @@ def _input_staleness_error(
     return ""
 
 
-def _input_freshness_metrics(background: dict[str, Any], *, now: float | None = None) -> dict[str, Any]:
+def _input_freshness_metrics(
+    background: dict[str, Any], *, now: float | None = None
+) -> dict[str, Any]:
     reference_time = time.time() if now is None else now
     result: dict[str, Any] = {"max_age_seconds": 0.0}
     ages: list[float] = []
     for key in ("snapshot", "quotes"):
         raw_path = background.get(key)
-        item: dict[str, Any] = {"path": str(raw_path) if raw_path else "", "exists": False}
+        item: dict[str, Any] = {
+            "path": str(raw_path) if raw_path else "",
+            "exists": False,
+        }
         if raw_path:
             path = Path(str(raw_path))
             item["exists"] = path.exists()
@@ -528,7 +582,11 @@ def _markdown(result: dict[str, Any]) -> str:
     policy = result.get("policy_leaders") or {}
     if isinstance(policy, dict) and policy:
         lines.extend(["", "## Policy leaders", ""])
-        for label in ["risk_first_leader", "income_first_leader", "sample_first_leader"]:
+        for label in [
+            "risk_first_leader",
+            "income_first_leader",
+            "sample_first_leader",
+        ]:
             item = policy.get(label) or {}
             if isinstance(item, dict) and item:
                 lines.append(

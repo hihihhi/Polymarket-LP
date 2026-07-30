@@ -34,7 +34,8 @@ def evaluate_completion_audit(
 
     gates = {
         "objective_proven": bool(objective.get("objective_proven", False)),
-        "sustainability_stress_passed": sustain.get("status") == "sustainability_stress_passed",
+        "sustainability_stress_passed": sustain.get("status")
+        == "sustainability_stress_passed",
         "risk_governor_core_passed": bool(governor.get("risk_core_passed", False)),
         "rescue_stress_passed": rescue.get("status") == "rescue_stress_passed",
         "deployment_allowed": bool(governor.get("deployment_allowed", False)),
@@ -53,18 +54,36 @@ def evaluate_completion_audit(
         "status": "completion_proven" if completion_proven else "completion_not_proven",
         "completion_proven": completion_proven,
         "metrics": {
-            "selected_qsize": governor_metrics.get("selected_qsize", objective_metrics.get("selected_qsize")),
+            "selected_qsize": governor_metrics.get(
+                "selected_qsize", objective_metrics.get("selected_qsize")
+            ),
             "governed_qsize": governor_metrics.get("recommended_qsize"),
-            "objective_packet_50pct_p05": objective_metrics.get("packet_50pct_capture_p05"),
-            "governor_50pct_p05": governor_metrics.get("governing_50pct_p05_monthly_income"),
-            "sustainability_reference_income": sustain_metrics.get("reference_monthly_income"),
-            "sustainability_after_cap_loss": sustain_metrics.get("configured_cap_reference_monthly_after_loss"),
+            "objective_packet_50pct_p05": objective_metrics.get(
+                "packet_50pct_capture_p05"
+            ),
+            "governor_50pct_p05": governor_metrics.get(
+                "governing_50pct_p05_monthly_income"
+            ),
+            "sustainability_reference_income": sustain_metrics.get(
+                "reference_monthly_income"
+            ),
+            "sustainability_after_cap_loss": sustain_metrics.get(
+                "configured_cap_reference_monthly_after_loss"
+            ),
             "cash_reserve_fraction": governor_metrics.get("cash_reserve_fraction"),
             "unhedged_loss_usdc": governor_metrics.get("unhedged_loss_usdc"),
-            "configured_cap_loss_usdc": governor_metrics.get("configured_cap_loss_usdc"),
-            "configured_cap_recovery_days": governor_metrics.get("configured_cap_recovery_days"),
-            "rescue_price_feasible_rate": _dict(rescue.get("metrics")).get("price_feasible_rate"),
-            "rescue_blocked_loss_usdc": _dict(rescue.get("metrics")).get("latest_blocked_loss_to_zero"),
+            "configured_cap_loss_usdc": governor_metrics.get(
+                "configured_cap_loss_usdc"
+            ),
+            "configured_cap_recovery_days": governor_metrics.get(
+                "configured_cap_recovery_days"
+            ),
+            "rescue_price_feasible_rate": _dict(rescue.get("metrics")).get(
+                "price_feasible_rate"
+            ),
+            "rescue_blocked_loss_usdc": _dict(rescue.get("metrics")).get(
+                "latest_blocked_loss_to_zero"
+            ),
             "rescue_immediate_exit_loss_usdc": _dict(rescue.get("metrics")).get(
                 "latest_immediate_exit_loss_if_rescue_fails"
             ),

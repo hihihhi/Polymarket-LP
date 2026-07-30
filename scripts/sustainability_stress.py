@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run LP income-survival stress for the $1k/month objective."""
+
 from __future__ import annotations
 
 import argparse
@@ -13,7 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from polymarket_lp.sustainability import SustainabilityStressConfig, evaluate_sustainability_stress
+from polymarket_lp.sustainability import (
+    SustainabilityStressConfig,
+    evaluate_sustainability_stress,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,7 +82,11 @@ def main() -> None:
         shutil.copyfile(md, args.downloads_copy)
     if args.downloads_json_copy:
         shutil.copyfile(out, args.downloads_json_copy)
-    print(json.dumps({"status": payload["status"], "blockers": payload["blockers"]}, indent=2))
+    print(
+        json.dumps(
+            {"status": payload["status"], "blockers": payload["blockers"]}, indent=2
+        )
+    )
 
 
 def _markdown(payload: dict[str, Any]) -> str:

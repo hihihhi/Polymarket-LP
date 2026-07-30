@@ -7,6 +7,7 @@ the same monthly target, bootstrap capture, CLOB depth, and partial-rescue
 residual-loss gates used by the live-paper watcher. It never signs, submits,
 cancels, or inspects orders.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,14 +26,36 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from polymarket_lp.depth_gate import DepthReadinessConfig, evaluate_depth_readiness  # noqa: E402
-from polymarket_lp.capital_risk import CapitalRiskStressConfig, evaluate_capital_risk_stress  # noqa: E402
-from polymarket_lp.drawdown_guard import DrawdownGuardConfig, evaluate_drawdown_guard  # noqa: E402
+from polymarket_lp.capital_risk import (  # noqa: E402
+    CapitalRiskStressConfig,
+    evaluate_capital_risk_stress,
+)
+from polymarket_lp.depth_gate import (  # noqa: E402
+    DepthReadinessConfig,
+    evaluate_depth_readiness,
+)
+from polymarket_lp.drawdown_guard import (  # noqa: E402
+    DrawdownGuardConfig,
+    evaluate_drawdown_guard,
+)
 from polymarket_lp.lp_backtest import LPConfig, load_snapshots  # noqa: E402
-from polymarket_lp.paper import PaperAnalysisConfig, analyze_paper_quotes, build_paper_quotes  # noqa: E402
-from polymarket_lp.rescue_stress import RescueStressConfig, evaluate_rescue_stress  # noqa: E402
-from polymarket_lp.target import TargetMonitorConfig, target_monitor_from_summary  # noqa: E402
-from scripts.update_target_status import _bootstrap_target_from_quotes, _capture_stress_grid  # noqa: E402
+from polymarket_lp.paper import (  # noqa: E402
+    PaperAnalysisConfig,
+    analyze_paper_quotes,
+    build_paper_quotes,
+)
+from polymarket_lp.rescue_stress import (  # noqa: E402
+    RescueStressConfig,
+    evaluate_rescue_stress,
+)
+from polymarket_lp.target import (  # noqa: E402
+    TargetMonitorConfig,
+    target_monitor_from_summary,
+)
+from scripts.update_target_status import (  # noqa: E402
+    _bootstrap_target_from_quotes,
+    _capture_stress_grid,
+)
 
 
 @dataclass(slots=True)
@@ -65,12 +88,29 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--safety-margin", type=float, default=0.015)
     p.add_argument("--initial-capital", type=float, default=2000.0)
     p.add_argument("--active-capital-limit", type=float, default=1200.0)
-    p.add_argument("--max-unpaired-per-market-grid", default=str(LPConfig().max_unpaired_per_market))
-    p.add_argument("--max-total-unpaired-grid", default=str(LPConfig().max_total_unpaired))
-    p.add_argument("--max-cluster-unpaired-grid", default=str(LPConfig().max_cluster_unpaired))
-    p.add_argument("--max-unpaired-minutes-grid", default=str(LPConfig().max_unpaired_minutes))
-    p.add_argument("--depth-cap-quote-size-grid", default="0", help="Comma grid of 0/1; 1 caps quotes by displayed opposite-side ask depth before reward scoring")
-    p.add_argument("--depth-quote-size-fraction-grid", default="1.0", help="Comma grid for displayed-depth fraction when depth cap is enabled")
+    p.add_argument(
+        "--max-unpaired-per-market-grid",
+        default=str(LPConfig().max_unpaired_per_market),
+    )
+    p.add_argument(
+        "--max-total-unpaired-grid", default=str(LPConfig().max_total_unpaired)
+    )
+    p.add_argument(
+        "--max-cluster-unpaired-grid", default=str(LPConfig().max_cluster_unpaired)
+    )
+    p.add_argument(
+        "--max-unpaired-minutes-grid", default=str(LPConfig().max_unpaired_minutes)
+    )
+    p.add_argument(
+        "--depth-cap-quote-size-grid",
+        default="0",
+        help="Comma grid of 0/1; 1 caps quotes by displayed opposite-side ask depth before reward scoring",
+    )
+    p.add_argument(
+        "--depth-quote-size-fraction-grid",
+        default="1.0",
+        help="Comma grid for displayed-depth fraction when depth cap is enabled",
+    )
     p.add_argument("--min-depth-capped-quote-size", type=float, default=1.0)
     p.add_argument("--excluded-categories", default="sports,crypto")
     p.add_argument("--max-recent-vol", type=float, default=0.006)
@@ -95,7 +135,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-taker-rescue-feasible-rate", type=float, default=0.80)
     p.add_argument("--min-taker-rescue-depth-fraction", type=float, default=1.0)
     p.add_argument("--taker-rescue-min-pair-edge-per-share", type=float, default=0.0)
-    p.add_argument("--max-latest-taker-residual-loss-fraction", type=float, default=0.05)
+    p.add_argument(
+        "--max-latest-taker-residual-loss-fraction", type=float, default=0.05
+    )
     p.add_argument("--max-mtm-drawdown-fraction", type=float, default=0.10)
     p.add_argument("--max-realized-drawdown-fraction", type=float, default=0.05)
     p.add_argument("--max-open-inventory-fraction", type=float, default=0.50)
@@ -109,11 +151,28 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-latest-markets", type=int, default=2)
     p.add_argument("--max-single-market-active-fraction", type=float, default=0.35)
     p.add_argument("--max-single-cluster-active-fraction", type=float, default=0.70)
-    p.add_argument("--max-single-market-unhedged-loss-fraction", type=float, default=0.20)
-    p.add_argument("--max-single-cluster-unhedged-loss-fraction", type=float, default=0.50)
-    p.add_argument("--progress-every", type=int, default=0, help="Write checkpoint artifacts every N configs; 0 disables.")
-    p.add_argument("--progress-json", default="", help="Optional progress JSON path; defaults under --out-dir when progress is enabled.")
-    p.add_argument("--progress-csv", default="", help="Optional progress CSV path; defaults under --out-dir when progress is enabled.")
+    p.add_argument(
+        "--max-single-market-unhedged-loss-fraction", type=float, default=0.20
+    )
+    p.add_argument(
+        "--max-single-cluster-unhedged-loss-fraction", type=float, default=0.50
+    )
+    p.add_argument(
+        "--progress-every",
+        type=int,
+        default=0,
+        help="Write checkpoint artifacts every N configs; 0 disables.",
+    )
+    p.add_argument(
+        "--progress-json",
+        default="",
+        help="Optional progress JSON path; defaults under --out-dir when progress is enabled.",
+    )
+    p.add_argument(
+        "--progress-csv",
+        default="",
+        help="Optional progress CSV path; defaults under --out-dir when progress is enabled.",
+    )
     return p.parse_args()
 
 
@@ -310,12 +369,16 @@ def main() -> None:
             "residual_loss_grid": _float_grid(args.residual_loss_grid),
             "offset_grid": _float_grid(args.offset_grid),
             "density_grid": _float_grid(args.density_grid),
-            "max_unpaired_per_market_grid": _float_grid(args.max_unpaired_per_market_grid),
+            "max_unpaired_per_market_grid": _float_grid(
+                args.max_unpaired_per_market_grid
+            ),
             "max_total_unpaired_grid": _float_grid(args.max_total_unpaired_grid),
             "max_cluster_unpaired_grid": _float_grid(args.max_cluster_unpaired_grid),
             "max_unpaired_minutes_grid": _float_grid(args.max_unpaired_minutes_grid),
             "depth_cap_quote_size_grid": _bool_grid(args.depth_cap_quote_size_grid),
-            "depth_quote_size_fraction_grid": _float_grid(args.depth_quote_size_fraction_grid),
+            "depth_quote_size_fraction_grid": _float_grid(
+                args.depth_quote_size_fraction_grid
+            ),
             "min_depth_capped_quote_size": args.min_depth_capped_quote_size,
             "active_capital_limit": args.active_capital_limit,
             "excluded_categories": args.excluded_categories,
@@ -328,15 +391,29 @@ def main() -> None:
         "safety": "paper research only; no private keys, order signing, order submission, or cancellation",
     }
     if selected:
-        selected_quotes = Path(args.selected_quotes) if args.selected_quotes else out / "selected_quotes.csv"
+        selected_quotes = (
+            Path(args.selected_quotes)
+            if args.selected_quotes
+            else out / "selected_quotes.csv"
+        )
         selected_quotes.parent.mkdir(parents=True, exist_ok=True)
-        build_paper_quotes(snapshots, _lp_config_from_selected(selected, args)).to_csv(selected_quotes, index=False)
+        build_paper_quotes(snapshots, _lp_config_from_selected(selected, args)).to_csv(
+            selected_quotes, index=False
+        )
         payload["selected_quotes"] = str(selected_quotes)
     (out / "partial_rescue_config_selection.json").write_text(
         json.dumps(_json_safe(payload), indent=2, allow_nan=False) + "\n",
         encoding="utf-8",
     )
-    print(json.dumps({"selection_json": str(out / "partial_rescue_config_selection.json"), "selected": _json_safe(selected)}, indent=2))
+    print(
+        json.dumps(
+            {
+                "selection_json": str(out / "partial_rescue_config_selection.json"),
+                "selected": _json_safe(selected),
+            },
+            indent=2,
+        )
+    )
 
 
 def _target_status_from_quotes(
@@ -422,12 +499,17 @@ def _candidate_row(
     )
     capital_passed = bool(capital_gates.get("capital_risk_stress_passed", True))
     drawdown_core_passed = bool(drawdown.get("risk_core_passed", True))
-    research_core_passed = bool(risk_income_gate and drawdown_core_passed and capital_passed)
-    promotion_ready = bool(depth_gates.get("depth_ready") and drawdown_core_passed and capital_passed)
+    research_core_passed = bool(
+        risk_income_gate and drawdown_core_passed and capital_passed
+    )
+    promotion_ready = bool(
+        depth_gates.get("depth_ready") and drawdown_core_passed and capital_passed
+    )
     strict_topbook_rescue = bool(
         _float(depth_metrics.get("taker_rescue_feasible_rate"), 0.0) >= 1.0
         and _float(depth_metrics.get("taker_rescue_min_depth_fraction"), 0.0) >= 1.0
-        and _float(depth_metrics.get("latest_taker_residual_loss_fraction"), math.inf) <= 1e-12
+        and _float(depth_metrics.get("latest_taker_residual_loss_fraction"), math.inf)
+        <= 1e-12
     )
     return {
         "quote_size": quote_size,
@@ -451,29 +533,65 @@ def _candidate_row(
         "fill_proxy_rate": _float(paper.get("fill_proxy_rate")),
         "bootstrap_intervals": int(_float(bootstrap.get("intervals"), 0.0)),
         "net_monthly_p05": _float(bootstrap.get("net_monthly_p05")),
-        "income_p05_at_required_capture": _float(depth_metrics.get("income_p05_at_required_capture")),
-        "taker_rescue_feasible_rate": _float(depth_metrics.get("taker_rescue_feasible_rate")),
-        "taker_rescue_min_depth_fraction": _float(depth_metrics.get("taker_rescue_min_depth_fraction")),
-        "taker_size_weighted_rescue_fraction": _float(depth_metrics.get("taker_size_weighted_rescue_fraction")),
-        "latest_taker_residual_loss_to_zero": _float(depth_metrics.get("latest_taker_residual_loss_to_zero")),
-        "latest_taker_residual_loss_fraction": _float(depth_metrics.get("latest_taker_residual_loss_fraction")),
-        "taker_rescued_size_fraction_p05": _float(rescue_metrics.get("taker_rescued_size_fraction_p05")),
+        "income_p05_at_required_capture": _float(
+            depth_metrics.get("income_p05_at_required_capture")
+        ),
+        "taker_rescue_feasible_rate": _float(
+            depth_metrics.get("taker_rescue_feasible_rate")
+        ),
+        "taker_rescue_min_depth_fraction": _float(
+            depth_metrics.get("taker_rescue_min_depth_fraction")
+        ),
+        "taker_size_weighted_rescue_fraction": _float(
+            depth_metrics.get("taker_size_weighted_rescue_fraction")
+        ),
+        "latest_taker_residual_loss_to_zero": _float(
+            depth_metrics.get("latest_taker_residual_loss_to_zero")
+        ),
+        "latest_taker_residual_loss_fraction": _float(
+            depth_metrics.get("latest_taker_residual_loss_fraction")
+        ),
+        "taker_rescued_size_fraction_p05": _float(
+            rescue_metrics.get("taker_rescued_size_fraction_p05")
+        ),
         "strict_topbook_rescue_passed": strict_topbook_rescue,
         "drawdown_status": drawdown.get("status", "not_evaluated"),
         "drawdown_core_passed": bool(drawdown.get("risk_core_passed", True)),
-        "drawdown_mtm_fraction": _float(drawdown_metrics.get("max_drawdown_mtm_fraction")),
-        "drawdown_realized_fraction": _float(drawdown_metrics.get("max_drawdown_realized_fraction")),
-        "drawdown_reward_to_trading_loss_ratio": _float(drawdown_metrics.get("reward_to_trading_loss_ratio")),
-        "drawdown_max_active_order_fraction": _float(drawdown_metrics.get("max_active_order_fraction")),
+        "drawdown_mtm_fraction": _float(
+            drawdown_metrics.get("max_drawdown_mtm_fraction")
+        ),
+        "drawdown_realized_fraction": _float(
+            drawdown_metrics.get("max_drawdown_realized_fraction")
+        ),
+        "drawdown_reward_to_trading_loss_ratio": _float(
+            drawdown_metrics.get("reward_to_trading_loss_ratio")
+        ),
+        "drawdown_max_active_order_fraction": _float(
+            drawdown_metrics.get("max_active_order_fraction")
+        ),
         "capital_status": capital.get("status", "not_evaluated"),
         "capital_risk_stress_passed": capital_passed,
-        "capital_cash_reserve_fraction": _float(capital_metrics.get("cash_reserve_fraction")),
-        "capital_unhedged_loss_fraction": _float(capital_metrics.get("unhedged_loss_fraction_of_capital")),
-        "capital_configured_cap_loss_usdc": _float(capital_metrics.get("configured_inventory_cap_loss_to_zero")),
-        "capital_configured_cap_loss_fraction": _float(capital_metrics.get("configured_inventory_cap_loss_fraction")),
-        "capital_configured_cap_recovery_days": _float(capital_metrics.get("capped_recovery_days_at_p05_income")),
-        "capital_capture_needed_after_cap_loss": _float(capital_metrics.get("capture_needed_after_cap_loss")),
-        "capital_after_cap_loss_monthly": _float(capital_metrics.get("reference_capture_p05_monthly_after_cap_loss")),
+        "capital_cash_reserve_fraction": _float(
+            capital_metrics.get("cash_reserve_fraction")
+        ),
+        "capital_unhedged_loss_fraction": _float(
+            capital_metrics.get("unhedged_loss_fraction_of_capital")
+        ),
+        "capital_configured_cap_loss_usdc": _float(
+            capital_metrics.get("configured_inventory_cap_loss_to_zero")
+        ),
+        "capital_configured_cap_loss_fraction": _float(
+            capital_metrics.get("configured_inventory_cap_loss_fraction")
+        ),
+        "capital_configured_cap_recovery_days": _float(
+            capital_metrics.get("capped_recovery_days_at_p05_income")
+        ),
+        "capital_capture_needed_after_cap_loss": _float(
+            capital_metrics.get("capture_needed_after_cap_loss")
+        ),
+        "capital_after_cap_loss_monthly": _float(
+            capital_metrics.get("reference_capture_p05_monthly_after_cap_loss")
+        ),
         "risk_income_gate_passed": risk_income_gate,
         "research_core_passed": research_core_passed,
         "depth_ready": bool(depth_gates.get("depth_ready")),
@@ -497,9 +615,17 @@ def _selection_status(selected: dict[str, Any]) -> str:
     drawdown_passed = bool(selected.get("drawdown_core_passed", True))
     if bool(selected.get("depth_ready")) and drawdown_passed and capital_passed:
         return "selected_depth_ready"
-    if bool(selected.get("risk_income_gate_passed")) and drawdown_passed and capital_passed:
+    if (
+        bool(selected.get("risk_income_gate_passed"))
+        and drawdown_passed
+        and capital_passed
+    ):
         return "selected_risk_income_drawdown_capital_passed_sample_not_ready"
-    if bool(selected.get("risk_income_gate_passed")) and drawdown_passed and not capital_passed:
+    if (
+        bool(selected.get("risk_income_gate_passed"))
+        and drawdown_passed
+        and not capital_passed
+    ):
         return "selected_risk_income_drawdown_passed_capital_failed"
     if bool(selected.get("risk_income_gate_passed")) and not drawdown_passed:
         return "selected_risk_income_passed_drawdown_failed"
@@ -525,7 +651,20 @@ def _sorted_frame(candidates: list[dict[str, Any]]) -> pd.DataFrame:
             "drawdown_reward_to_trading_loss_ratio",
             "avg_active_pair_notional",
         ],
-        ascending=[False, False, False, False, False, True, True, True, True, False, False, True],
+        ascending=[
+            False,
+            False,
+            False,
+            False,
+            False,
+            True,
+            True,
+            True,
+            True,
+            False,
+            False,
+            True,
+        ],
     )
 
 
@@ -539,8 +678,16 @@ def _write_progress(
     args: argparse.Namespace,
     final: bool,
 ) -> None:
-    progress_csv = Path(args.progress_csv) if args.progress_csv else out / "partial_rescue_config_progress.csv"
-    progress_json = Path(args.progress_json) if args.progress_json else out / "partial_rescue_config_progress.json"
+    progress_csv = (
+        Path(args.progress_csv)
+        if args.progress_csv
+        else out / "partial_rescue_config_progress.csv"
+    )
+    progress_json = (
+        Path(args.progress_json)
+        if args.progress_json
+        else out / "partial_rescue_config_progress.json"
+    )
     progress_csv.parent.mkdir(parents=True, exist_ok=True)
     progress_json.parent.mkdir(parents=True, exist_ok=True)
     frame = _sorted_frame(candidates)
@@ -565,11 +712,16 @@ def _write_progress(
         "safety": "progress checkpoint only; no private keys, order signing, order submission, or cancellation",
     }
     tmp = progress_json.with_suffix(progress_json.suffix + ".tmp")
-    tmp.write_text(json.dumps(_json_safe(payload), indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    tmp.write_text(
+        json.dumps(_json_safe(payload), indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
     tmp.replace(progress_json)
 
 
-def _lp_config_from_selected(selected: dict[str, Any], args: argparse.Namespace) -> LPConfig:
+def _lp_config_from_selected(
+    selected: dict[str, Any], args: argparse.Namespace
+) -> LPConfig:
     """Rebuild the selected LP config without retaining every grid quote frame.
 
     Large grids can contain thousands of parameter combinations. Persisting every
@@ -595,7 +747,9 @@ def _lp_config_from_selected(selected: dict[str, Any], args: argparse.Namespace)
         depth_cap_quote_size=bool(selected["depth_cap_quote_size"]),
         depth_quote_size_fraction=float(selected["depth_quote_size_fraction"]),
         min_depth_capped_quote_size_shares=args.min_depth_capped_quote_size,
-        partial_rescue_max_residual_loss_usdc=float(selected["partial_rescue_max_residual_loss_usdc"]),
+        partial_rescue_max_residual_loss_usdc=float(
+            selected["partial_rescue_max_residual_loss_usdc"]
+        ),
     )
 
 
@@ -614,7 +768,9 @@ def _bool_grid(text: str) -> list[bool]:
         elif token in {"0", "false", "f", "no", "n", "off"}:
             values.append(False)
         else:
-            raise SystemExit(f"invalid boolean grid token for --depth-cap-quote-size-grid: {part!r}")
+            raise SystemExit(
+                f"invalid boolean grid token for --depth-cap-quote-size-grid: {part!r}"
+            )
     return values
 
 

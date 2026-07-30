@@ -5,6 +5,7 @@ This script is read-only. It can fetch the public geoblock endpoint or read a
 saved endpoint JSON. It never logs in, signs, submits, cancels, or places
 orders, and it redacts direct IP evidence from outputs.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -17,10 +18,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from polymarket_lp.compliance import (  # noqa: E402
-    ComplianceAvailabilityConfig,
     DEFAULT_DOCS_URL,
     DEFAULT_GEOBLOCK_URL,
     DEFAULT_NEW_ORDER_RESTRICTED_COUNTRY_CODES,
+    ComplianceAvailabilityConfig,
     evaluate_compliance_availability,
     fetch_geoblock_status,
 )
@@ -28,8 +29,14 @@ from polymarket_lp.compliance import (  # noqa: E402
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--geoblock-json", default="", help="Optional saved geoblock endpoint JSON")
-    p.add_argument("--fetch-geoblock", action="store_true", help="Fetch the public geoblock endpoint")
+    p.add_argument(
+        "--geoblock-json", default="", help="Optional saved geoblock endpoint JSON"
+    )
+    p.add_argument(
+        "--fetch-geoblock",
+        action="store_true",
+        help="Fetch the public geoblock endpoint",
+    )
     p.add_argument("--endpoint-url", default=DEFAULT_GEOBLOCK_URL)
     p.add_argument("--docs-url", default=DEFAULT_DOCS_URL)
     p.add_argument("--session-country-code", default="")
@@ -56,11 +63,19 @@ def main() -> None:
         payload = json.loads(Path(args.geoblock_json).read_text(encoding="utf-8-sig"))
     elif args.fetch_geoblock:
         try:
-            payload = fetch_geoblock_status(args.endpoint_url, timeout_seconds=args.timeout_seconds)
-        except Exception as exc:  # pragma: no cover - network failures are environment-dependent
+            payload = fetch_geoblock_status(
+                args.endpoint_url, timeout_seconds=args.timeout_seconds
+            )
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - network failures are environment-dependent
             endpoint_error = f"{type(exc).__name__}: {exc}"
             payload = {}
-    restricted = tuple(code.strip().upper() for code in args.restricted_country_codes.split(",") if code.strip())
+    restricted = tuple(
+        code.strip().upper()
+        for code in args.restricted_country_codes.split(",")
+        if code.strip()
+    )
     result = evaluate_compliance_availability(
         payload,
         ComplianceAvailabilityConfig(

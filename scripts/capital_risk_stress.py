@@ -5,6 +5,7 @@ This script is local/read-only. It reads paper quote CSV plus optional target
 status/manifest JSON, then writes JSON/Markdown stress reports. It never signs,
 submits, cancels, or inspects private keys.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -47,8 +48,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-latest-markets", type=int, default=2)
     p.add_argument("--max-single-market-active-fraction", type=float, default=0.35)
     p.add_argument("--max-single-cluster-active-fraction", type=float, default=0.70)
-    p.add_argument("--max-single-market-unhedged-loss-fraction", type=float, default=0.20)
-    p.add_argument("--max-single-cluster-unhedged-loss-fraction", type=float, default=0.50)
+    p.add_argument(
+        "--max-single-market-unhedged-loss-fraction", type=float, default=0.20
+    )
+    p.add_argument(
+        "--max-single-cluster-unhedged-loss-fraction", type=float, default=0.50
+    )
     p.add_argument("--target-monthly", type=float, default=1000.0)
     p.add_argument("--reference-capture-rate", type=float, default=0.50)
     p.add_argument("--max-capture-needed-after-cap-loss", type=float, default=0.40)
@@ -87,7 +92,10 @@ def main() -> None:
     if args.out:
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(_json_safe(result), indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        out.write_text(
+            json.dumps(_json_safe(result), indent=2, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
     markdown = _markdown(result)
     if args.markdown_out:
         md = Path(args.markdown_out)
@@ -95,7 +103,11 @@ def main() -> None:
         md.write_text(markdown, encoding="utf-8")
         if args.downloads_copy:
             shutil.copyfile(md, args.downloads_copy)
-    print(json.dumps({"status": result["status"], "blockers": result["blockers"]}, indent=2))
+    print(
+        json.dumps(
+            {"status": result["status"], "blockers": result["blockers"]}, indent=2
+        )
+    )
 
 
 def _load_json(path: str) -> dict[str, Any]:

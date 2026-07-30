@@ -44,18 +44,26 @@ def evaluate_hedge_feasibility(
     exit_slippage = _num(cap_config.get("exit_slippage"), cfg.exit_slippage)
     unhedged_loss = _num(cap_metrics.get("all_active_unhedged_one_side_loss_to_zero"))
     configured_cap_loss = _num(cap_metrics.get("configured_inventory_cap_loss_to_zero"))
-    configured_cap_recovery_days = _num(cap_metrics.get("capped_recovery_days_at_p05_income"))
+    configured_cap_recovery_days = _num(
+        cap_metrics.get("capped_recovery_days_at_p05_income")
+    )
     max_pair_cost = _num(cap_metrics.get("max_pair_cost_per_share"))
     min_pair_edge = _num(cap_metrics.get("min_locked_pair_edge_usdc"))
     if not math.isfinite(min_pair_edge) and markets:
         min_pair_edge = min(_num(row.get("locked_pair_edge_usdc")) for row in markets)
     pair_lock_edge_total = sum(
-        x for x in (_num(row.get("locked_pair_edge_usdc")) for row in markets) if math.isfinite(x)
+        x
+        for x in (_num(row.get("locked_pair_edge_usdc")) for row in markets)
+        if math.isfinite(x)
     )
-    pair_slippage_cushion = max(0.0, 1.0 - max_pair_cost) if math.isfinite(max_pair_cost) else math.nan
+    pair_slippage_cushion = (
+        max(0.0, 1.0 - max_pair_cost) if math.isfinite(max_pair_cost) else math.nan
+    )
     loss_reduction_fraction = (
         1.0 - configured_cap_loss / unhedged_loss
-        if unhedged_loss > 0 and math.isfinite(unhedged_loss) and math.isfinite(configured_cap_loss)
+        if unhedged_loss > 0
+        and math.isfinite(unhedged_loss)
+        and math.isfinite(configured_cap_loss)
         else math.nan
     )
 
@@ -64,13 +72,18 @@ def evaluate_hedge_feasibility(
         and max_pair_cost <= cfg.max_pair_cost_per_share,
         "emergency_exit_slippage_cushion_passed": pair_slippage_cushion
         >= exit_slippage * cfg.min_slippage_cushion_multiplier,
-        "configured_cap_tail_reduction_passed": loss_reduction_fraction >= cfg.min_loss_reduction_fraction,
-        "configured_cap_loss_passed": (configured_cap_loss / initial_capital) <= cfg.max_configured_cap_loss_fraction
+        "configured_cap_tail_reduction_passed": loss_reduction_fraction
+        >= cfg.min_loss_reduction_fraction,
+        "configured_cap_loss_passed": (configured_cap_loss / initial_capital)
+        <= cfg.max_configured_cap_loss_fraction
         if initial_capital > 0 and math.isfinite(configured_cap_loss)
         else False,
-        "configured_cap_recovery_passed": configured_cap_recovery_days <= cfg.max_configured_cap_recovery_days,
+        "configured_cap_recovery_passed": configured_cap_recovery_days
+        <= cfg.max_configured_cap_recovery_days,
         "no_total_ruin_unhedged_gate_passed": bool(
-            cap_gates.get("no_total_ruin_unhedged_gate_passed", unhedged_loss < initial_capital)
+            cap_gates.get(
+                "no_total_ruin_unhedged_gate_passed", unhedged_loss < initial_capital
+            )
         ),
         "perfect_external_hedge_available": bool(cfg.external_hedge_available),
     }
@@ -82,10 +95,13 @@ def evaluate_hedge_feasibility(
         "configured_cap_recovery_passed",
         "no_total_ruin_unhedged_gate_passed",
     ]
-    gates["partial_internal_hedge_feasible"] = all(gates[name] for name in core_gate_names)
-    gates["perfect_hedge_feasible"] = gates["partial_internal_hedge_feasible"] and gates[
-        "perfect_external_hedge_available"
-    ]
+    gates["partial_internal_hedge_feasible"] = all(
+        gates[name] for name in core_gate_names
+    )
+    gates["perfect_hedge_feasible"] = (
+        gates["partial_internal_hedge_feasible"]
+        and gates["perfect_external_hedge_available"]
+    )
 
     if gates["perfect_hedge_feasible"]:
         status = "perfect_hedge_feasible"
@@ -102,7 +118,9 @@ def evaluate_hedge_feasibility(
             "initial_capital": initial_capital,
             "unhedged_one_side_loss_usdc": unhedged_loss,
             "configured_cap_loss_usdc": configured_cap_loss,
-            "configured_cap_loss_fraction": configured_cap_loss / initial_capital if initial_capital > 0 else math.inf,
+            "configured_cap_loss_fraction": configured_cap_loss / initial_capital
+            if initial_capital > 0
+            else math.inf,
             "configured_cap_recovery_days": configured_cap_recovery_days,
             "configured_cap_loss_reduction_fraction": loss_reduction_fraction,
             "max_pair_cost_per_share": max_pair_cost,
@@ -110,7 +128,9 @@ def evaluate_hedge_feasibility(
             "pair_lock_edge_total_usdc": pair_lock_edge_total,
             "pair_slippage_cushion_per_share": pair_slippage_cushion,
             "exit_slippage_assumption": exit_slippage,
-            "packet_cash_reserve_fraction": _num(packet_risk.get("cash_reserve_fraction")),
+            "packet_cash_reserve_fraction": _num(
+                packet_risk.get("cash_reserve_fraction")
+            ),
         },
         "gates": gates,
         "blockers": _blockers(gates, cfg),
@@ -138,8 +158,12 @@ def _blockers(gates: dict[str, bool], cfg: HedgeFeasibilityConfig) -> list[str]:
         "configured_cap_recovery_passed": f"configured-cap recovery exceeds {cfg.max_configured_cap_recovery_days:.1f} days",
         "no_total_ruin_unhedged_gate_passed": "unhedged one-sided fill stress can lose all capital",
     }
-    blockers = [message for gate, message in labels.items() if not gates.get(gate, False)]
-    if gates.get("partial_internal_hedge_feasible") and not gates.get("perfect_external_hedge_available"):
+    blockers = [
+        message for gate, message in labels.items() if not gates.get(gate, False)
+    ]
+    if gates.get("partial_internal_hedge_feasible") and not gates.get(
+        "perfect_external_hedge_available"
+    ):
         blockers.append("no perfect external hedge assumed; hedge is partial/internal")
     return blockers
 

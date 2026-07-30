@@ -37,7 +37,8 @@ def select_allocation(
     income_passed = [
         row
         for row in evaluated
-        if row["gates"]["income_gate_passed"] and row["gates"]["capital_stress_gate_passed"]
+        if row["gates"]["income_gate_passed"]
+        and row["gates"]["capital_stress_gate_passed"]
     ]
     selected = _select_passed(passed, cfg)
     income_max = max(
@@ -56,11 +57,17 @@ def select_allocation(
     }
 
 
-def evaluate_allocation_row(row: dict[str, Any], cfg: AllocationSelectionConfig) -> dict[str, Any]:
+def evaluate_allocation_row(
+    row: dict[str, Any], cfg: AllocationSelectionConfig
+) -> dict[str, Any]:
     qsize = _num(row.get("qsize"))
     captured_p05 = _num(row.get("captured_net_monthly_p05"))
     configured_cap_loss = _num(row.get("configured_cap_loss"))
-    configured_cap_fraction = configured_cap_loss / cfg.initial_capital if cfg.initial_capital > 0 else math.inf
+    configured_cap_fraction = (
+        configured_cap_loss / cfg.initial_capital
+        if cfg.initial_capital > 0
+        else math.inf
+    )
     metrics = {
         "qsize": int(qsize) if math.isfinite(qsize) else row.get("qsize"),
         "quote_offset": _num(row.get("quote_offset")),
@@ -69,7 +76,9 @@ def evaluate_allocation_row(row: dict[str, Any], cfg: AllocationSelectionConfig)
         "unique_markets_quoted": int(_num(row.get("unique_markets_quoted"), 0.0)),
         "duration_hours": _num(row.get("duration_hours")),
         "avg_active_pair_notional": _num(row.get("avg_active_pair_notional")),
-        "net_monthly_after_loss_haircut": _num(row.get("net_monthly_after_loss_haircut")),
+        "net_monthly_after_loss_haircut": _num(
+            row.get("net_monthly_after_loss_haircut")
+        ),
         "captured_net_monthly_p05": captured_p05,
         "capture_needed_for_target": _num(row.get("capture_needed_for_target")),
         "cash_reserve_fraction": _num(row.get("cash_reserve_fraction")),
@@ -87,13 +96,20 @@ def evaluate_allocation_row(row: dict[str, Any], cfg: AllocationSelectionConfig)
     gates = {
         "frontier_selected_gate_passed": _bool(row.get("selected_gate_passed")),
         "capital_stress_gate_passed": _bool(row.get("capital_risk_stress_passed")),
-        "income_gate_passed": captured_p05 >= cfg.target_monthly_usdc * cfg.min_target_margin,
-        "diversification_gate_passed": metrics["unique_markets_quoted"] >= cfg.min_unique_markets,
-        "cash_reserve_gate_passed": metrics["cash_reserve_fraction"] >= cfg.min_cash_reserve_fraction,
-        "unhedged_loss_gate_passed": metrics["unhedged_loss_fraction"] <= cfg.max_unhedged_loss_fraction,
-        "configured_cap_loss_gate_passed": configured_cap_fraction <= cfg.max_configured_cap_loss_fraction,
-        "configured_cap_recovery_gate_passed": metrics["configured_cap_recovery_days"] <= cfg.max_configured_cap_recovery_days,
-        "mid_move_gate_passed": metrics["max_abs_mid_change_to_next"] <= cfg.max_abs_mid_change_to_next,
+        "income_gate_passed": captured_p05
+        >= cfg.target_monthly_usdc * cfg.min_target_margin,
+        "diversification_gate_passed": metrics["unique_markets_quoted"]
+        >= cfg.min_unique_markets,
+        "cash_reserve_gate_passed": metrics["cash_reserve_fraction"]
+        >= cfg.min_cash_reserve_fraction,
+        "unhedged_loss_gate_passed": metrics["unhedged_loss_fraction"]
+        <= cfg.max_unhedged_loss_fraction,
+        "configured_cap_loss_gate_passed": configured_cap_fraction
+        <= cfg.max_configured_cap_loss_fraction,
+        "configured_cap_recovery_gate_passed": metrics["configured_cap_recovery_days"]
+        <= cfg.max_configured_cap_recovery_days,
+        "mid_move_gate_passed": metrics["max_abs_mid_change_to_next"]
+        <= cfg.max_abs_mid_change_to_next,
     }
     gates["allocation_gate_passed"] = bool(all(gates.values()))
     return {
@@ -112,7 +128,9 @@ def _select_passed(
         return None
     objective = cfg.objective.strip().lower()
     if objective == "income":
-        return max(passed, key=lambda row: _num(row["metrics"].get("captured_net_monthly_p05")))
+        return max(
+            passed, key=lambda row: _num(row["metrics"].get("captured_net_monthly_p05"))
+        )
     if objective == "sustainable":
         return min(
             passed,
@@ -161,7 +179,9 @@ def _aggregate_blockers(rows: list[dict[str, Any]]) -> list[str]:
     for row in rows:
         for blocker in row["blockers"]:
             counts[blocker] = counts.get(blocker, 0) + 1
-    return [f"{blocker} ({count} candidates)" for blocker, count in sorted(counts.items())]
+    return [
+        f"{blocker} ({count} candidates)" for blocker, count in sorted(counts.items())
+    ]
 
 
 def _bool(value: Any) -> bool:

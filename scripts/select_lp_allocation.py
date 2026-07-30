@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Select a risk-managed LP allocation from a quote-size frontier CSV."""
+
 from __future__ import annotations
 
 import argparse
@@ -33,7 +34,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-configured-cap-loss-fraction", type=float, default=0.25)
     p.add_argument("--max-configured-cap-recovery-days", type=float, default=10.0)
     p.add_argument("--max-abs-mid-change-to-next", type=float, default=0.011)
-    p.add_argument("--objective", choices=["balanced", "sustainable", "income"], default="balanced")
+    p.add_argument(
+        "--objective", choices=["balanced", "sustainable", "income"], default="balanced"
+    )
     return p.parse_args()
 
 
@@ -69,7 +72,12 @@ def main() -> None:
         shutil.copyfile(md, args.downloads_copy)
     if args.downloads_json_copy:
         shutil.copyfile(out, args.downloads_json_copy)
-    print(json.dumps({"status": result["status"], "selected": _qsize(result.get("selected"))}, indent=2))
+    print(
+        json.dumps(
+            {"status": result["status"], "selected": _qsize(result.get("selected"))},
+            indent=2,
+        )
+    )
 
 
 def _read_csv(path: str) -> list[dict[str, Any]]:

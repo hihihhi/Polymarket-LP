@@ -40,37 +40,59 @@ def evaluate_objective_proof(
         "target_monthly_usdc": cfg.target_monthly_usdc,
         "allocation_status": allocation_selection.get("status"),
         "selected_qsize": selected_metrics.get("qsize"),
-        "selected_50pct_capture_p05": _num(selected_metrics.get("captured_net_monthly_p05")),
-        "selected_net_monthly_after_loss_haircut": _num(selected_metrics.get("net_monthly_after_loss_haircut")),
-        "selected_cash_reserve_fraction": _num(selected_metrics.get("cash_reserve_fraction")),
-        "selected_unhedged_loss_fraction": _num(selected_metrics.get("unhedged_loss_fraction")),
-        "selected_configured_cap_recovery_days": _num(selected_metrics.get("configured_cap_recovery_days")),
+        "selected_50pct_capture_p05": _num(
+            selected_metrics.get("captured_net_monthly_p05")
+        ),
+        "selected_net_monthly_after_loss_haircut": _num(
+            selected_metrics.get("net_monthly_after_loss_haircut")
+        ),
+        "selected_cash_reserve_fraction": _num(
+            selected_metrics.get("cash_reserve_fraction")
+        ),
+        "selected_unhedged_loss_fraction": _num(
+            selected_metrics.get("unhedged_loss_fraction")
+        ),
+        "selected_configured_cap_recovery_days": _num(
+            selected_metrics.get("configured_cap_recovery_days")
+        ),
         "packet_status": evidence_packet.get("status"),
         "packet_observation_hours": _num(income.get("observation_hours")),
         "packet_50pct_capture_p05": _num(income.get("p05_monthly_50pct_capture")),
-        "packet_net_monthly_after_loss_haircut": _num(income.get("net_monthly_after_loss_haircut")),
+        "packet_net_monthly_after_loss_haircut": _num(
+            income.get("net_monthly_after_loss_haircut")
+        ),
         "packet_cash_reserve_fraction": _num(risk.get("cash_reserve_fraction")),
-        "packet_unhedged_loss_fraction": _num(risk.get("unhedged_loss_fraction_of_capital")),
+        "packet_unhedged_loss_fraction": _num(
+            risk.get("unhedged_loss_fraction_of_capital")
+        ),
     }
     gates = {
-        "allocation_selected": allocation_selection.get("status") == "allocation_selected",
-        "allocation_income_above_target": metrics["selected_50pct_capture_p05"] >= cfg.target_monthly_usdc,
-        "packet_income_above_target": metrics["packet_50pct_capture_p05"] >= cfg.target_monthly_usdc,
+        "allocation_selected": allocation_selection.get("status")
+        == "allocation_selected",
+        "allocation_income_above_target": metrics["selected_50pct_capture_p05"]
+        >= cfg.target_monthly_usdc,
+        "packet_income_above_target": metrics["packet_50pct_capture_p05"]
+        >= cfg.target_monthly_usdc,
         "cash_reserve_passed": (
             bool(packet_gates.get("cash_reserve_passed"))
-            and metrics["selected_cash_reserve_fraction"] >= cfg.min_cash_reserve_fraction
+            and metrics["selected_cash_reserve_fraction"]
+            >= cfg.min_cash_reserve_fraction
         ),
         "capital_stress_passed": bool(packet_gates.get("capital_stress_passed")),
         "selected_unhedged_loss_passed": (
             bool(selected_gates.get("unhedged_loss_gate_passed"))
-            and metrics["selected_unhedged_loss_fraction"] <= cfg.max_unhedged_loss_fraction
+            and metrics["selected_unhedged_loss_fraction"]
+            <= cfg.max_unhedged_loss_fraction
         ),
         "selected_cap_recovery_passed": (
             bool(selected_gates.get("configured_cap_recovery_gate_passed"))
-            and metrics["selected_configured_cap_recovery_days"] <= cfg.max_configured_cap_recovery_days
+            and metrics["selected_configured_cap_recovery_days"]
+            <= cfg.max_configured_cap_recovery_days
         ),
         "sample_24h_passed": bool(packet_gates.get("sample_24h_passed")),
-        "rolling_all_windows_passed": bool(packet_gates.get("rolling_all_windows_passed")),
+        "rolling_all_windows_passed": bool(
+            packet_gates.get("rolling_all_windows_passed")
+        ),
         "telemetry_passed": bool(packet_gates.get("telemetry_passed")),
         "deployment_ready": bool(packet_gates.get("deployment_ready")),
     }

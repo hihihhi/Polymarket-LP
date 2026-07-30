@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Sweep LP strategy configs on snapshot or synthetic data."""
+
 from __future__ import annotations
 
 import argparse
@@ -13,7 +14,12 @@ if str(ROOT) not in sys.path:
 
 import pandas as pd
 
-from polymarket_lp.lp_backtest import LPConfig, load_snapshots, make_synthetic_snapshots, simulate_lp
+from polymarket_lp.lp_backtest import (
+    LPConfig,
+    load_snapshots,
+    make_synthetic_snapshots,
+    simulate_lp,
+)
 
 
 def parse_csv_floats(value: str) -> list[float]:
@@ -45,14 +51,24 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     if args.synthetic:
-        snapshots = make_synthetic_snapshots(seed=args.seed, days=args.synthetic_days, n_markets=args.synthetic_markets)
+        snapshots = make_synthetic_snapshots(
+            seed=args.seed, days=args.synthetic_days, n_markets=args.synthetic_markets
+        )
     elif args.snapshots:
         snapshots = load_snapshots(args.snapshots)
     else:
         raise SystemExit("Provide --snapshots or --synthetic")
 
     rows = []
-    for quote_size, quote_offset, max_unpaired, exit_loss, max_minutes, min_reward, max_comp in product(
+    for (
+        quote_size,
+        quote_offset,
+        max_unpaired,
+        exit_loss,
+        max_minutes,
+        min_reward,
+        max_comp,
+    ) in product(
         parse_csv_floats(args.quote_sizes),
         parse_csv_floats(args.quote_offsets),
         parse_csv_floats(args.max_unpaired_per_market),
@@ -89,14 +105,27 @@ def main() -> None:
     result = pd.DataFrame(rows)
     if result.empty:
         raise SystemExit("No configs produced trades/quotes")
-    result = result.sort_values(["total_pnl_usdc", "reward_to_trading_loss_ratio", "max_drawdown_mtm_pct"], ascending=[False, False, False])
+    result = result.sort_values(
+        ["total_pnl_usdc", "reward_to_trading_loss_ratio", "max_drawdown_mtm_pct"],
+        ascending=[False, False, False],
+    )
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     result.to_csv(out, index=False)
     cols = [
-        "total_pnl_usdc", "total_reward_usdc", "total_inventory_exit_pnl_usdc", "max_drawdown_mtm_pct",
-        "reward_to_trading_loss_ratio", "pair_completion_ratio_shares", "quote_size_shares", "quote_offset",
-        "max_unpaired_per_market", "exit_loss_cents", "max_unpaired_minutes", "min_reward_daily", "max_market_competitiveness",
+        "total_pnl_usdc",
+        "total_reward_usdc",
+        "total_inventory_exit_pnl_usdc",
+        "max_drawdown_mtm_pct",
+        "reward_to_trading_loss_ratio",
+        "pair_completion_ratio_shares",
+        "quote_size_shares",
+        "quote_offset",
+        "max_unpaired_per_market",
+        "exit_loss_cents",
+        "max_unpaired_minutes",
+        "min_reward_daily",
+        "max_market_competitiveness",
     ]
     print(result[cols].head(args.top).to_string(index=False))
     print(f"\nWrote {len(result)} rows to {out}")

@@ -4,6 +4,7 @@
 This does not place orders. It estimates would-fill/stale-fill diagnostics by
 checking whether the next observed midpoint crossed each paper bid.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,7 +24,11 @@ from polymarket_lp.paper import PaperAnalysisConfig, run_paper_analysis_to_files
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--snapshots", required=True, help="CSV written by scripts/paper_replay.py --live")
+    p.add_argument(
+        "--snapshots",
+        required=True,
+        help="CSV written by scripts/paper_replay.py --live",
+    )
     p.add_argument("--quotes", required=True, help="Paper quote intents CSV")
     p.add_argument("--out-dir", default="data/processed/paper_analysis")
     p.add_argument("--max-stale-seconds", type=float, default=900.0)

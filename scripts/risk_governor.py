@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build a risk-governed operating decision from LP proof artifacts."""
+
 from __future__ import annotations
 
 import argparse
@@ -44,7 +45,9 @@ def main() -> None:
         evidence_packet=_load(args.evidence_packet),
         allocation_selection=_load(args.allocation_selection),
         objective_audit=_load(args.objective_audit) if args.objective_audit else None,
-        sustainability_stress=_load(args.sustainability_stress) if args.sustainability_stress else None,
+        sustainability_stress=_load(args.sustainability_stress)
+        if args.sustainability_stress
+        else None,
         cfg=RiskGovernorConfig(
             initial_capital=args.initial_capital,
             target_monthly_usdc=args.target_monthly,
@@ -76,7 +79,11 @@ def main() -> None:
         shutil.copyfile(md, args.downloads_copy)
     if args.downloads_json_copy:
         shutil.copyfile(out, args.downloads_json_copy)
-    print(json.dumps({"status": payload["status"], "blockers": payload["blockers"]}, indent=2))
+    print(
+        json.dumps(
+            {"status": payload["status"], "blockers": payload["blockers"]}, indent=2
+        )
+    )
 
 
 def _markdown(payload: dict[str, Any]) -> str:

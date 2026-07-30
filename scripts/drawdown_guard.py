@@ -5,6 +5,7 @@ This reads public snapshot CSVs from candidate background manifests and runs the
 local LP simulator with each candidate's parameterized quote rules. It never
 signs, submits, cancels, or inspects orders.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -29,7 +30,12 @@ from polymarket_lp.lp_backtest import load_snapshots  # noqa: E402
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--candidate", action="append", required=True, help="NAME=background_manifest.json")
+    p.add_argument(
+        "--candidate",
+        action="append",
+        required=True,
+        help="NAME=background_manifest.json",
+    )
     p.add_argument("--out", required=True)
     p.add_argument("--markdown-out", required=True)
     p.add_argument("--initial-capital", type=float, default=2000.0)
@@ -62,7 +68,9 @@ def main() -> None:
             rows.append(_pending_result(name, "manifest missing snapshot"))
             continue
         if not Path(str(snapshot_path)).exists():
-            rows.append(_pending_result(name, f"snapshot path does not exist: {snapshot_path}"))
+            rows.append(
+                _pending_result(name, f"snapshot path does not exist: {snapshot_path}")
+            )
             continue
         manifest["_candidate_name"] = name
         lp_cfg = lp_config_from_manifest(manifest)
@@ -81,7 +89,10 @@ def main() -> None:
     }
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(_json_safe(payload), indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    out.write_text(
+        json.dumps(_json_safe(payload), indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
     md = Path(args.markdown_out)
     md.parent.mkdir(parents=True, exist_ok=True)
     md.write_text(_markdown(payload), encoding="utf-8")

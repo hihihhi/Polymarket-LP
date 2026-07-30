@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Audit whether the current evidence proves the $1k/month managed-risk objective."""
+
 from __future__ import annotations
 
 import argparse
@@ -70,7 +71,11 @@ def main() -> None:
         shutil.copyfile(md, args.downloads_copy)
     if args.downloads_json_copy:
         shutil.copyfile(out, args.downloads_json_copy)
-    print(json.dumps({"status": result["status"], "blockers": result["blockers"]}, indent=2))
+    print(
+        json.dumps(
+            {"status": result["status"], "blockers": result["blockers"]}, indent=2
+        )
+    )
 
 
 def _markdown(payload: dict[str, Any]) -> str:
@@ -95,7 +100,9 @@ def _markdown(payload: dict[str, Any]) -> str:
     ]
     required = payload["required_gates"]
     gates = payload["gates"]
-    lines.extend(f"| {name} | {required[name]} | {gates.get(name)} |" for name in required)
+    lines.extend(
+        f"| {name} | {required[name]} | {gates.get(name)} |" for name in required
+    )
     if payload["blockers"]:
         lines += ["", "## Blockers", ""]
         lines.extend(f"- {x}" for x in payload["blockers"])

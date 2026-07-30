@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build shadow order/fill/cancel telemetry from public-paper LP quote intents."""
+
 from __future__ import annotations
 
 import argparse
@@ -14,7 +15,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from polymarket_lp.shadow_telemetry import ShadowTelemetryConfig, build_shadow_execution_telemetry
+from polymarket_lp.shadow_telemetry import (
+    ShadowTelemetryConfig,
+    build_shadow_execution_telemetry,
+)
 from polymarket_lp.telemetry import ExecutionTelemetryConfig, audit_execution_telemetry
 
 
@@ -76,17 +80,26 @@ def main() -> None:
         "shadow_lifecycle_audit": lifecycle_audit,
         "strict_paid_reward_audit": strict_paid_reward_audit,
         "shadow_telemetry_audit": lifecycle_audit,
-        "outputs": {name: str(out / f"{name}.csv") for name in ["orders", "fills", "cancels", "rewards"]},
+        "outputs": {
+            name: str(out / f"{name}.csv")
+            for name in ["orders", "fills", "cancels", "rewards"]
+        },
         "safety": "shadow telemetry only; not exchange execution or paid reward proof",
     }
-    (out / "shadow_telemetry_summary.json").write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
+    (out / "shadow_telemetry_summary.json").write_text(
+        json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8"
+    )
     markdown = _markdown(payload)
     (out / "shadow_telemetry_summary.md").write_text(markdown, encoding="utf-8")
     if args.downloads_copy:
         shutil.copyfile(out / "shadow_telemetry_summary.md", args.downloads_copy)
     if args.downloads_json_copy:
         shutil.copyfile(out / "shadow_telemetry_summary.json", args.downloads_json_copy)
-    print(json.dumps({"status": status, "summary": telemetry["summary"]}, indent=2, default=str))
+    print(
+        json.dumps(
+            {"status": status, "summary": telemetry["summary"]}, indent=2, default=str
+        )
+    )
 
 
 def _markdown(payload: dict[str, object]) -> str:

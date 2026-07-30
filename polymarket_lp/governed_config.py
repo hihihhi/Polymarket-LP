@@ -25,12 +25,16 @@ def apply_risk_governor_to_lp_config(
         raise ValueError("risk governor core gates are not passed")
 
     recommended_qsize = _num(metrics.get("recommended_qsize"), cfg.quote_size_shares)
-    max_active_by_cash = _num(metrics.get("max_active_pair_notional_by_cash"), cfg.active_capital_limit)
+    max_active_by_cash = _num(
+        metrics.get("max_active_pair_notional_by_cash"), cfg.active_capital_limit
+    )
     recommended_scale = _num(metrics.get("recommended_scale"), 1.0)
     if not math.isfinite(recommended_qsize) or recommended_qsize <= 0:
         raise ValueError("risk governor recommended_qsize is not positive")
     if not math.isfinite(max_active_by_cash) or max_active_by_cash <= 0:
-        raise ValueError("risk governor max_active_pair_notional_by_cash is not positive")
+        raise ValueError(
+            "risk governor max_active_pair_notional_by_cash is not positive"
+        )
 
     governed = replace(
         cfg,

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Audit LP monthly target evidence against CLOB depth/rescue requirements."""
+
 from __future__ import annotations
 
 import argparse
@@ -13,7 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from polymarket_lp.depth_gate import DepthReadinessConfig, evaluate_depth_readiness  # noqa: E402
+from polymarket_lp.depth_gate import (  # noqa: E402
+    DepthReadinessConfig,
+    evaluate_depth_readiness,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,7 +36,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-taker-rescue-pair-edge-per-share", type=float, default=0.0)
     p.add_argument("--min-taker-rescue-depth-fraction", type=float, default=1.0)
     p.add_argument("--allow-partial-taker-rescue", action="store_true")
-    p.add_argument("--max-latest-taker-residual-loss-fraction", type=float, default=0.05)
+    p.add_argument(
+        "--max-latest-taker-residual-loss-fraction", type=float, default=0.05
+    )
     p.add_argument("--allow-non-clob-quality", action="store_true")
     return p.parse_args()
 
@@ -61,15 +67,25 @@ def main() -> None:
     )
     payload = {
         **result,
-        "source_paths": {"target_status": args.target_status, "rescue_stress": args.rescue_stress},
+        "source_paths": {
+            "target_status": args.target_status,
+            "rescue_stress": args.rescue_stress,
+        },
     }
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(_json_safe(payload), indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    out.write_text(
+        json.dumps(_json_safe(payload), indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
     md = Path(args.markdown_out)
     md.parent.mkdir(parents=True, exist_ok=True)
     md.write_text(_markdown(payload), encoding="utf-8")
-    print(json.dumps({"status": result["status"], "blockers": result["blockers"]}, indent=2))
+    print(
+        json.dumps(
+            {"status": result["status"], "blockers": result["blockers"]}, indent=2
+        )
+    )
 
 
 def _markdown(payload: dict[str, Any]) -> str:

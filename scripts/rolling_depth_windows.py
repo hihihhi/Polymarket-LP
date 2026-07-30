@@ -6,6 +6,7 @@ recomputes target-income diagnostics, rescue-stress metrics, and the CLOB-depth
 readiness gate per rolling window. It never signs, submits, cancels, or inspects
 orders.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,12 +24,24 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from polymarket_lp.depth_gate import DepthReadinessConfig, evaluate_depth_readiness  # noqa: E402
+from polymarket_lp.depth_gate import (  # noqa: E402
+    DepthReadinessConfig,
+    evaluate_depth_readiness,
+)
 from polymarket_lp.lp_backtest import load_snapshots  # noqa: E402
 from polymarket_lp.paper import PaperAnalysisConfig, analyze_paper_quotes  # noqa: E402
-from polymarket_lp.rescue_stress import RescueStressConfig, evaluate_rescue_stress  # noqa: E402
-from polymarket_lp.target import TargetMonitorConfig, target_monitor_from_summary  # noqa: E402
-from scripts.update_target_status import _bootstrap_target_from_quotes, _json_safe  # noqa: E402
+from polymarket_lp.rescue_stress import (  # noqa: E402
+    RescueStressConfig,
+    evaluate_rescue_stress,
+)
+from polymarket_lp.target import (  # noqa: E402
+    TargetMonitorConfig,
+    target_monitor_from_summary,
+)
+from scripts.update_target_status import (  # noqa: E402
+    _bootstrap_target_from_quotes,
+    _json_safe,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,7 +70,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-taker-rescue-depth-fraction", type=float, default=1.0)
     p.add_argument("--taker-rescue-min-pair-edge-per-share", type=float, default=0.0)
     p.add_argument("--allow-partial-taker-rescue", action="store_true")
-    p.add_argument("--max-latest-taker-residual-loss-fraction", type=float, default=0.05)
+    p.add_argument(
+        "--max-latest-taker-residual-loss-fraction", type=float, default=0.05
+    )
     p.add_argument("--allow-non-clob-quality", action="store_true")
     p.add_argument("--max-stale-seconds", type=float, default=900.0)
     p.add_argument("--stale-mid-change", type=float, default=0.03)
@@ -83,7 +98,9 @@ def main() -> None:
             ),
             start=1,
         ):
-            rows.append(_evaluate_window(idx, win_start, win_end, snapshots, quotes, args))
+            rows.append(
+                _evaluate_window(idx, win_start, win_end, snapshots, quotes, args)
+            )
     frame = pd.DataFrame(rows)
     csv_path = out / "rolling_depth_windows.csv"
     frame.to_csv(csv_path, index=False)
@@ -101,7 +118,15 @@ def main() -> None:
         encoding="utf-8",
     )
     (out / "rolling_depth_summary.md").write_text(_markdown(payload), encoding="utf-8")
-    print(json.dumps({"rolling_depth_summary": str(out / "rolling_depth_summary.json"), "windows": len(frame)}, indent=2))
+    print(
+        json.dumps(
+            {
+                "rolling_depth_summary": str(out / "rolling_depth_summary.json"),
+                "windows": len(frame),
+            },
+            indent=2,
+        )
+    )
 
 
 def _evaluate_window(
@@ -112,8 +137,12 @@ def _evaluate_window(
     quotes: pd.DataFrame,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
-    s_win = snapshots[(snapshots["timestamp"] >= win_start) & (snapshots["timestamp"] <= win_end)].copy()
-    q_win = quotes[(quotes["timestamp"] >= win_start) & (quotes["timestamp"] <= win_end)].copy()
+    s_win = snapshots[
+        (snapshots["timestamp"] >= win_start) & (snapshots["timestamp"] <= win_end)
+    ].copy()
+    q_win = quotes[
+        (quotes["timestamp"] >= win_start) & (quotes["timestamp"] <= win_end)
+    ].copy()
     target_status = _target_status_for_window(s_win, q_win, args)
     rescue = evaluate_rescue_stress(
         q_win,
@@ -157,25 +186,41 @@ def _evaluate_window(
         "duration_hours": d_metrics.get("duration_hours"),
         "quote_rows": d_metrics.get("quote_rows"),
         "unique_markets_quoted": d_metrics.get("unique_markets_quoted"),
-        "income_p05_at_required_capture": d_metrics.get("income_p05_at_required_capture"),
+        "income_p05_at_required_capture": d_metrics.get(
+            "income_p05_at_required_capture"
+        ),
         "clob_quality_rate": d_metrics.get("clob_quality_rate"),
         "taker_rescue_book_scenarios": d_metrics.get("taker_rescue_book_scenarios"),
         "taker_rescue_feasible_rate": d_metrics.get("taker_rescue_feasible_rate"),
-        "taker_rescue_min_depth_fraction": d_metrics.get("taker_rescue_min_depth_fraction"),
-        "taker_size_weighted_rescue_fraction": d_metrics.get("taker_size_weighted_rescue_fraction"),
-        "latest_taker_residual_loss_to_zero": d_metrics.get("latest_taker_residual_loss_to_zero"),
-        "latest_taker_residual_loss_fraction": d_metrics.get("latest_taker_residual_loss_fraction"),
+        "taker_rescue_min_depth_fraction": d_metrics.get(
+            "taker_rescue_min_depth_fraction"
+        ),
+        "taker_size_weighted_rescue_fraction": d_metrics.get(
+            "taker_size_weighted_rescue_fraction"
+        ),
+        "latest_taker_residual_loss_to_zero": d_metrics.get(
+            "latest_taker_residual_loss_to_zero"
+        ),
+        "latest_taker_residual_loss_fraction": d_metrics.get(
+            "latest_taker_residual_loss_fraction"
+        ),
         "rescue_status": rescue["status"],
         "price_feasible_rate": r_metrics.get("price_feasible_rate"),
-        "loss_weighted_price_feasible_rate": r_metrics.get("loss_weighted_price_feasible_rate"),
+        "loss_weighted_price_feasible_rate": r_metrics.get(
+            "loss_weighted_price_feasible_rate"
+        ),
     }
 
 
-def _target_status_for_window(snapshots: pd.DataFrame, quotes: pd.DataFrame, args: argparse.Namespace) -> dict[str, Any]:
+def _target_status_for_window(
+    snapshots: pd.DataFrame, quotes: pd.DataFrame, args: argparse.Namespace
+) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "duration_hours": 0.0,
         "quote_rows": int(len(quotes)),
-        "unique_markets_quoted": int(quotes["condition_id"].nunique()) if "condition_id" in quotes else 0,
+        "unique_markets_quoted": int(quotes["condition_id"].nunique())
+        if "condition_id" in quotes
+        else 0,
         "quote_data_quality_counts": {},
     }
     if not snapshots.empty and not quotes.empty:
@@ -225,22 +270,41 @@ def _target_status_for_window(snapshots: pd.DataFrame, quotes: pd.DataFrame, arg
                 "captured_net_monthly_p05": bootstrap.get("captured_net_monthly_p05"),
             }
         )
-    return {"paper_summary": summary, "target_monitor": monitor, "bootstrap_target": bootstrap, "capture_stress_grid": capture_stress_grid}
+    return {
+        "paper_summary": summary,
+        "target_monitor": monitor,
+        "bootstrap_target": bootstrap,
+        "capture_stress_grid": capture_stress_grid,
+    }
 
 
 def _summary(frame: pd.DataFrame) -> dict[str, Any]:
     if frame.empty:
-        return {"windows": 0, "depth_ready_pass_rate": 0.0, "all_windows_depth_ready": False}
+        return {
+            "windows": 0,
+            "depth_ready_pass_rate": 0.0,
+            "all_windows_depth_ready": False,
+        }
     pass_rate = float(frame["depth_ready"].mean())
     return {
         "windows": int(len(frame)),
         "depth_ready_pass_rate": pass_rate,
         "all_windows_depth_ready": bool(pass_rate == 1.0),
-        "min_income_p05_at_required_capture": _finite_min(frame["income_p05_at_required_capture"]),
-        "min_taker_rescue_feasible_rate": _finite_min(frame["taker_rescue_feasible_rate"]),
-        "min_taker_size_weighted_rescue_fraction": _finite_min(frame["taker_size_weighted_rescue_fraction"]),
-        "max_latest_taker_residual_loss_fraction": _finite_max(frame["latest_taker_residual_loss_fraction"]),
-        "max_latest_taker_residual_loss_to_zero": _finite_max(frame["latest_taker_residual_loss_to_zero"]),
+        "min_income_p05_at_required_capture": _finite_min(
+            frame["income_p05_at_required_capture"]
+        ),
+        "min_taker_rescue_feasible_rate": _finite_min(
+            frame["taker_rescue_feasible_rate"]
+        ),
+        "min_taker_size_weighted_rescue_fraction": _finite_min(
+            frame["taker_size_weighted_rescue_fraction"]
+        ),
+        "max_latest_taker_residual_loss_fraction": _finite_max(
+            frame["latest_taker_residual_loss_fraction"]
+        ),
+        "max_latest_taker_residual_loss_to_zero": _finite_max(
+            frame["latest_taker_residual_loss_to_zero"]
+        ),
         "min_clob_quality_rate": _finite_min(frame["clob_quality_rate"]),
     }
 
@@ -279,7 +343,13 @@ def _time_windows(
 ) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
     window = pd.Timedelta(hours=max(float(window_hours), 0.0))
     step = pd.Timedelta(hours=max(float(step_hours), 0.0))
-    if pd.isna(start) or pd.isna(end) or window <= pd.Timedelta(0) or step <= pd.Timedelta(0) or end < start + window:
+    if (
+        pd.isna(start)
+        or pd.isna(end)
+        or window <= pd.Timedelta(0)
+        or step <= pd.Timedelta(0)
+        or end < start + window
+    ):
         return []
     out: list[tuple[pd.Timestamp, pd.Timestamp]] = []
     current = start
@@ -294,7 +364,9 @@ def _with_ts(frame: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     out = frame.copy()
     out["timestamp"] = pd.to_datetime(out["timestamp"], utc=True, errors="coerce")
-    return out.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    return (
+        out.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    )
 
 
 def _num(value: Any, default: float = float("nan")) -> float:
@@ -306,12 +378,20 @@ def _num(value: Any, default: float = float("nan")) -> float:
 
 
 def _finite_min(values: pd.Series) -> float | None:
-    clean = pd.to_numeric(values, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    clean = (
+        pd.to_numeric(values, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
     return float(clean.min()) if len(clean) else None
 
 
 def _finite_max(values: pd.Series) -> float | None:
-    clean = pd.to_numeric(values, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    clean = (
+        pd.to_numeric(values, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
     return float(clean.max()) if len(clean) else None
 
 

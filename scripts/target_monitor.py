@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Evaluate whether LP paper evidence clears a monthly income target gate."""
+
 from __future__ import annotations
 
 import argparse
@@ -16,7 +17,11 @@ from polymarket_lp.target import TargetMonitorConfig, target_monitor_from_summar
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--paper-summary", required=True, help="paper_summary.json from scripts/paper_analyze.py")
+    p.add_argument(
+        "--paper-summary",
+        required=True,
+        help="paper_summary.json from scripts/paper_analyze.py",
+    )
     p.add_argument("--out", default="", help="Optional JSON output path")
     p.add_argument("--initial-capital", type=float, default=2000.0)
     p.add_argument("--target-monthly", type=float, default=1000.0)

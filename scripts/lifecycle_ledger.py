@@ -4,6 +4,7 @@
 Read/write local files only. This script never signs, submits, cancels, or
 places orders and must not be given secrets.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,7 +32,9 @@ def parse_args() -> argparse.Namespace:
     schema.add_argument("--out", default="")
     append = sub.add_parser("append")
     append.add_argument("--ledger", required=True)
-    append.add_argument("--event-json", required=True, help="JSON string or path to JSON object")
+    append.add_argument(
+        "--event-json", required=True, help="JSON string or path to JSON object"
+    )
     verify = sub.add_parser("verify")
     verify.add_argument("--ledger", required=True)
     verify.add_argument("--out", default="")
@@ -54,8 +57,14 @@ def main() -> None:
         return
     if args.cmd == "append":
         src = Path(args.event_json)
-        event = json.loads(src.read_text(encoding="utf-8-sig") if src.exists() else args.event_json)
-        print(json.dumps(append_lifecycle_event(args.ledger, event), indent=2, default=str))
+        event = json.loads(
+            src.read_text(encoding="utf-8-sig") if src.exists() else args.event_json
+        )
+        print(
+            json.dumps(
+                append_lifecycle_event(args.ledger, event), indent=2, default=str
+            )
+        )
         return
     if args.cmd == "verify":
         payload = verify_lifecycle_ledger(args.ledger, LifecycleLedgerConfig())

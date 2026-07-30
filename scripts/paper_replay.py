@@ -5,6 +5,7 @@ This does not place orders. It reads point-in-time market snapshots and writes t
 quotes the strategy would have posted after reward-density, volatility, jump, and
 capital-budget filters.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -16,16 +17,26 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from polymarket_lp.lp_backtest import LPConfig, load_snapshots
-from polymarket_lp.paper import LiveSnapshotConfig, build_paper_quotes, run_live_paper_loop
 from polymarket_lp.governed_config import apply_risk_governor_to_lp_config
+from polymarket_lp.lp_backtest import LPConfig, load_snapshots
+from polymarket_lp.paper import (
+    LiveSnapshotConfig,
+    build_paper_quotes,
+    run_live_paper_loop,
+)
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--snapshots", help="CSV of point-in-time snapshots for offline replay")
+    p.add_argument(
+        "--snapshots", help="CSV of point-in-time snapshots for offline replay"
+    )
     p.add_argument("--out", default="paper_quotes.csv")
-    p.add_argument("--live", action="store_true", help="Collect public live snapshots before writing paper quotes")
+    p.add_argument(
+        "--live",
+        action="store_true",
+        help="Collect public live snapshots before writing paper quotes",
+    )
     p.add_argument("--snapshot-out", default="data/raw/live_lp_snapshots.csv")
     p.add_argument("--manifest-out", default="data/raw/live_lp_paper_manifest.json")
     p.add_argument("--iterations", type=int, default=1)
@@ -41,10 +52,20 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--quote-size", type=float, default=800)
     p.add_argument("--quote-offset", type=float, default=0.035)
     p.add_argument("--safety-margin", type=float, default=0.015)
-    p.add_argument("--max-unpaired-per-market", type=float, default=LPConfig().max_unpaired_per_market)
-    p.add_argument("--max-total-unpaired", type=float, default=LPConfig().max_total_unpaired)
-    p.add_argument("--max-cluster-unpaired", type=float, default=LPConfig().max_cluster_unpaired)
-    p.add_argument("--max-unpaired-minutes", type=float, default=LPConfig().max_unpaired_minutes)
+    p.add_argument(
+        "--max-unpaired-per-market",
+        type=float,
+        default=LPConfig().max_unpaired_per_market,
+    )
+    p.add_argument(
+        "--max-total-unpaired", type=float, default=LPConfig().max_total_unpaired
+    )
+    p.add_argument(
+        "--max-cluster-unpaired", type=float, default=LPConfig().max_cluster_unpaired
+    )
+    p.add_argument(
+        "--max-unpaired-minutes", type=float, default=LPConfig().max_unpaired_minutes
+    )
     p.add_argument("--active-capital-limit", type=float, default=1900)
     p.add_argument("--min-reward-daily", type=float, default=0.0)
     p.add_argument("--max-market-competitiveness", type=float, default=1.0)
@@ -55,11 +76,34 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-recent-vol", type=float, default=0.006)
     p.add_argument("--max-recent-jump", type=float, default=0.025)
     p.add_argument("--vol-quote-multiplier", type=float, default=0.5)
-    p.add_argument("--depth-cap-quote-size", action="store_true", help="Cap quote size by displayed opposite-side CLOB ask depth for taker rescue")
-    p.add_argument("--depth-quote-size-fraction", type=float, default=1.0, help="Maximum quote size as fraction of the smaller YES/NO displayed ask size")
-    p.add_argument("--min-depth-capped-quote-size", type=float, default=1.0, help="Drop depth-capped quotes smaller than this share size")
-    p.add_argument("--partial-rescue-max-residual-loss-usdc", type=float, default=0.0, help="If >0, allow quotes above displayed rescue depth only while bounding residual one-sided loss per market")
-    p.add_argument("--risk-governor-json", default="", help="Optional risk_governor.py JSON to govern qsize/capital")
+    p.add_argument(
+        "--depth-cap-quote-size",
+        action="store_true",
+        help="Cap quote size by displayed opposite-side CLOB ask depth for taker rescue",
+    )
+    p.add_argument(
+        "--depth-quote-size-fraction",
+        type=float,
+        default=1.0,
+        help="Maximum quote size as fraction of the smaller YES/NO displayed ask size",
+    )
+    p.add_argument(
+        "--min-depth-capped-quote-size",
+        type=float,
+        default=1.0,
+        help="Drop depth-capped quotes smaller than this share size",
+    )
+    p.add_argument(
+        "--partial-rescue-max-residual-loss-usdc",
+        type=float,
+        default=0.0,
+        help="If >0, allow quotes above displayed rescue depth only while bounding residual one-sided loss per market",
+    )
+    p.add_argument(
+        "--risk-governor-json",
+        default="",
+        help="Optional risk_governor.py JSON to govern qsize/capital",
+    )
     p.add_argument("--allow-risk-governor-not-core", action="store_true")
     return p.parse_args()
 
@@ -70,10 +114,18 @@ def make_lp_config(args: argparse.Namespace) -> LPConfig:
         quote_size_shares=args.quote_size,
         quote_offset=args.quote_offset,
         safety_margin=args.safety_margin,
-        max_unpaired_per_market=getattr(args, "max_unpaired_per_market", LPConfig().max_unpaired_per_market),
-        max_total_unpaired=getattr(args, "max_total_unpaired", LPConfig().max_total_unpaired),
-        max_cluster_unpaired=getattr(args, "max_cluster_unpaired", LPConfig().max_cluster_unpaired),
-        max_unpaired_minutes=getattr(args, "max_unpaired_minutes", LPConfig().max_unpaired_minutes),
+        max_unpaired_per_market=getattr(
+            args, "max_unpaired_per_market", LPConfig().max_unpaired_per_market
+        ),
+        max_total_unpaired=getattr(
+            args, "max_total_unpaired", LPConfig().max_total_unpaired
+        ),
+        max_cluster_unpaired=getattr(
+            args, "max_cluster_unpaired", LPConfig().max_cluster_unpaired
+        ),
+        max_unpaired_minutes=getattr(
+            args, "max_unpaired_minutes", LPConfig().max_unpaired_minutes
+        ),
         active_capital_limit=args.active_capital_limit,
         min_reward_daily=args.min_reward_daily,
         max_market_competitiveness=args.max_market_competitiveness,
@@ -90,11 +142,15 @@ def make_lp_config(args: argparse.Namespace) -> LPConfig:
         partial_rescue_max_residual_loss_usdc=args.partial_rescue_max_residual_loss_usdc,
     )
     if getattr(args, "risk_governor_json", ""):
-        risk_governor = json.loads(Path(args.risk_governor_json).read_text(encoding="utf-8-sig"))
+        risk_governor = json.loads(
+            Path(args.risk_governor_json).read_text(encoding="utf-8-sig")
+        )
         cfg, _ = apply_risk_governor_to_lp_config(
             cfg,
             risk_governor,
-            require_core_passed=not getattr(args, "allow_risk_governor_not_core", False),
+            require_core_passed=not getattr(
+                args, "allow_risk_governor_not_core", False
+            ),
         )
     return cfg
 
