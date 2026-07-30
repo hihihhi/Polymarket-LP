@@ -4,6 +4,7 @@
 Local files only. This script does not log in, fetch account data, place
 orders, sign orders, or handle private keys.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -30,7 +31,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--estimates", default="", help="Estimated reward CSV")
     p.add_argument("--paid", default="", help="Paid reward/account ledger CSV")
     p.add_argument("--out", default="", help="Optional JSON output path")
-    p.add_argument("--joined-out", default="", help="Optional joined reconciliation CSV")
+    p.add_argument(
+        "--joined-out", default="", help="Optional joined reconciliation CSV"
+    )
     p.add_argument("--schema-out", default="", help="Optional schema CSV output path")
     p.add_argument("--min-paid-reward-usdc", type=float, default=0.01)
     p.add_argument("--min-reward-capture-rate", type=float, default=0.5)

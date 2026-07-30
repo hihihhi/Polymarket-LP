@@ -6,6 +6,7 @@ them into rolling point-in-time windows, recomputes paper diagnostics, and
 reports whether each window clears configurable income/risk gates. It never
 signs, submits, cancels, or inspects orders.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -72,9 +73,14 @@ def main() -> None:
         start = snapshots["timestamp"].min()
         end = snapshots["timestamp"].max()
         for idx, (win_start, win_end) in enumerate(
-            _time_windows(start, end, window_hours=args.window_hours, step_hours=args.step_hours), start=1
+            _time_windows(
+                start, end, window_hours=args.window_hours, step_hours=args.step_hours
+            ),
+            start=1,
         ):
-            rows.append(_evaluate_window(idx, win_start, win_end, snapshots, quotes, args))
+            rows.append(
+                _evaluate_window(idx, win_start, win_end, snapshots, quotes, args)
+            )
 
     frame = pd.DataFrame(rows)
     csv_path = out / "rolling_windows.csv"
@@ -98,7 +104,15 @@ def main() -> None:
     md_path.write_text(markdown, encoding="utf-8")
     if args.downloads_copy:
         shutil.copyfile(md_path, args.downloads_copy)
-    print(json.dumps({"rolling_summary": str(out / "rolling_summary.json"), "windows": len(frame)}, indent=2))
+    print(
+        json.dumps(
+            {
+                "rolling_summary": str(out / "rolling_summary.json"),
+                "windows": len(frame),
+            },
+            indent=2,
+        )
+    )
 
 
 def _evaluate_window(
@@ -109,8 +123,12 @@ def _evaluate_window(
     quotes: pd.DataFrame,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
-    s_win = snapshots[(snapshots["timestamp"] >= win_start) & (snapshots["timestamp"] <= win_end)].copy()
-    q_win = quotes[(quotes["timestamp"] >= win_start) & (quotes["timestamp"] <= win_end)].copy()
+    s_win = snapshots[
+        (snapshots["timestamp"] >= win_start) & (snapshots["timestamp"] <= win_end)
+    ].copy()
+    q_win = quotes[
+        (quotes["timestamp"] >= win_start) & (quotes["timestamp"] <= win_end)
+    ].copy()
     summary = {}
     monitor: dict[str, Any] = {"target_math": {}, "gates": {}, "status": "empty_window"}
     bootstrap: dict[str, Any] = {"enabled": True, "intervals": 0}
@@ -159,7 +177,11 @@ def _evaluate_window(
     gates = monitor.get("gates", {})
     duration = _num(summary.get("duration_hours"))
     max_active = _num(summary.get("max_active_pair_notional"))
-    cash_reserve_fraction = (args.initial_capital - max_active) / args.initial_capital if args.initial_capital else float("nan")
+    cash_reserve_fraction = (
+        (args.initial_capital - max_active) / args.initial_capital
+        if args.initial_capital
+        else float("nan")
+    )
     captured_p05 = _num(bootstrap.get("captured_net_monthly_p05"))
     target_threshold = args.target_monthly * args.min_target_margin
     window_gate = bool(
@@ -171,7 +193,8 @@ def _evaluate_window(
         and duration >= args.min_window_hours
         and cash_reserve_fraction >= args.min_cash_reserve_fraction
         and captured_p05 >= target_threshold
-        and _num(summary.get("max_abs_mid_change_to_next")) <= args.max_abs_mid_change_to_next
+        and _num(summary.get("max_abs_mid_change_to_next"))
+        <= args.max_abs_mid_change_to_next
     )
     return {
         "window_index": idx,
@@ -182,7 +205,9 @@ def _evaluate_window(
         "unique_markets_quoted": int(summary.get("unique_markets_quoted", 0) or 0),
         "max_active_pair_notional": max_active,
         "cash_reserve_fraction": cash_reserve_fraction,
-        "net_monthly_after_loss_haircut": _num(target_math.get("net_monthly_after_loss_haircut")),
+        "net_monthly_after_loss_haircut": _num(
+            target_math.get("net_monthly_after_loss_haircut")
+        ),
         "capture_needed_for_target": _num(target_math.get("capture_needed_for_target")),
         "bootstrap_intervals": int(bootstrap.get("intervals", 0) or 0),
         "captured_p05_net_monthly": captured_p05,
@@ -190,17 +215,30 @@ def _evaluate_window(
         "stale_fill_rate": _num(summary.get("stale_fill_rate"), 0.0),
         "pending_quote_rate": _num(summary.get("pending_quote_rate"), 0.0),
         "raw_pending_quote_rate": _num(summary.get("raw_pending_quote_rate"), 0.0),
-        "right_censored_pending_quote_rate": _num(summary.get("right_censored_pending_quote_rate"), 0.0),
-        "max_abs_mid_change_to_next": _num(summary.get("max_abs_mid_change_to_next"), 0.0),
+        "right_censored_pending_quote_rate": _num(
+            summary.get("right_censored_pending_quote_rate"), 0.0
+        ),
+        "max_abs_mid_change_to_next": _num(
+            summary.get("max_abs_mid_change_to_next"), 0.0
+        ),
         "density_gate_passed": bool(gates.get("density_gate_passed", False)),
         "capture_gate_passed": bool(gates.get("capture_gate_passed", False)),
         "risk_proxy_gate_passed": bool(gates.get("risk_proxy_gate_passed", False)),
-        "diversification_gate_passed": bool(gates.get("diversification_gate_passed", False)),
-        "active_notional_gate_passed": bool(gates.get("active_notional_gate_passed", False)),
+        "diversification_gate_passed": bool(
+            gates.get("diversification_gate_passed", False)
+        ),
+        "active_notional_gate_passed": bool(
+            gates.get("active_notional_gate_passed", False)
+        ),
         "sample_gate_passed": bool(duration >= args.min_window_hours),
-        "cash_reserve_gate_passed": bool(cash_reserve_fraction >= args.min_cash_reserve_fraction),
+        "cash_reserve_gate_passed": bool(
+            cash_reserve_fraction >= args.min_cash_reserve_fraction
+        ),
         "capture_stress_gate_passed": bool(captured_p05 >= target_threshold),
-        "mid_move_gate_passed": bool(_num(summary.get("max_abs_mid_change_to_next")) <= args.max_abs_mid_change_to_next),
+        "mid_move_gate_passed": bool(
+            _num(summary.get("max_abs_mid_change_to_next"))
+            <= args.max_abs_mid_change_to_next
+        ),
         "window_gate_passed": window_gate,
         "monitor_status": monitor.get("status", "empty_window"),
     }
@@ -220,9 +258,15 @@ def _summary(frame: pd.DataFrame, args: argparse.Namespace) -> dict[str, Any]:
         "window_gate_pass_rate": pass_rate,
         "all_windows_passed": bool(pass_rate == 1.0),
         "min_captured_p05_net_monthly": _finite_min(frame["captured_p05_net_monthly"]),
-        "median_captured_p05_net_monthly": _finite_quantile(frame["captured_p05_net_monthly"], 0.5),
-        "min_net_monthly_after_loss_haircut": _finite_min(frame["net_monthly_after_loss_haircut"]),
-        "max_capture_needed_for_target": _finite_max(frame["capture_needed_for_target"]),
+        "median_captured_p05_net_monthly": _finite_quantile(
+            frame["captured_p05_net_monthly"], 0.5
+        ),
+        "min_net_monthly_after_loss_haircut": _finite_min(
+            frame["net_monthly_after_loss_haircut"]
+        ),
+        "max_capture_needed_for_target": _finite_max(
+            frame["capture_needed_for_target"]
+        ),
         "max_abs_mid_change_to_next": _finite_max(frame["max_abs_mid_change_to_next"]),
         "max_pending_quote_rate": _finite_max(frame["pending_quote_rate"]),
         "target_monthly_usdc": args.target_monthly,
@@ -265,7 +309,13 @@ def _time_windows(
 ) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
     window = pd.Timedelta(hours=max(float(window_hours), 0.0))
     step = pd.Timedelta(hours=max(float(step_hours), 0.0))
-    if pd.isna(start) or pd.isna(end) or window <= pd.Timedelta(0) or step <= pd.Timedelta(0) or end < start + window:
+    if (
+        pd.isna(start)
+        or pd.isna(end)
+        or window <= pd.Timedelta(0)
+        or step <= pd.Timedelta(0)
+        or end < start + window
+    ):
         return []
     out: list[tuple[pd.Timestamp, pd.Timestamp]] = []
     current = start
@@ -280,7 +330,9 @@ def _with_ts(frame: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     out = frame.copy()
     out["timestamp"] = pd.to_datetime(out["timestamp"], utc=True, errors="coerce")
-    return out.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    return (
+        out.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    )
 
 
 def _num(value: Any, default: float = float("nan")) -> float:
@@ -292,17 +344,29 @@ def _num(value: Any, default: float = float("nan")) -> float:
 
 
 def _finite_min(values: pd.Series) -> float | None:
-    clean = pd.to_numeric(values, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    clean = (
+        pd.to_numeric(values, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
     return float(clean.min()) if len(clean) else None
 
 
 def _finite_max(values: pd.Series) -> float | None:
-    clean = pd.to_numeric(values, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    clean = (
+        pd.to_numeric(values, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
     return float(clean.max()) if len(clean) else None
 
 
 def _finite_quantile(values: pd.Series, q: float) -> float | None:
-    clean = pd.to_numeric(values, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    clean = (
+        pd.to_numeric(values, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
     return float(clean.quantile(q)) if len(clean) else None
 
 

@@ -6,6 +6,7 @@ by manual candidate tests, but makes quote size, residual cap, reward density,
 capital limits, and proof gates explicit CLI parameters. It is public-data only:
 no private keys, signing, order submission, or cancellation.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -78,7 +79,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--name", required=True)
     p.add_argument("--state-dir", required=True)
     p.add_argument("--repo", default=str(Path(__file__).resolve().parents[1]))
-    p.add_argument("--python", default=str(Path(__file__).resolve().parents[1] / ".venv" / "Scripts" / "python.exe"))
+    p.add_argument(
+        "--python",
+        default=str(
+            Path(__file__).resolve().parents[1] / ".venv" / "Scripts" / "python.exe"
+        ),
+    )
     p.add_argument("--quote-size", type=float, required=True)
     p.add_argument("--partial-rescue-max-residual-loss-usdc", type=float, required=True)
     p.add_argument("--min-reward-density-per-day", type=float, required=True)
@@ -166,7 +172,12 @@ def write_launch_artifacts(
     scripts["collector"] = _collector_script(cfg, paths)
     _write(paths["collector_script"], scripts["collector"])
 
-    pids: dict[str, int] = {"pid": 0, "watcher_pid": 0, "rolling_pid": 0, "extend24_pid": 0}
+    pids: dict[str, int] = {
+        "pid": 0,
+        "watcher_pid": 0,
+        "rolling_pid": 0,
+        "extend24_pid": 0,
+    }
     if start:
         pids["pid"] = _start_powershell(paths["collector_script"])
 
@@ -179,7 +190,9 @@ def write_launch_artifacts(
     if start:
         pids["watcher_pid"] = _start_powershell(paths["watcher_script"])
         pids["rolling_pid"] = _start_powershell(paths["rolling_script"])
-        scripts["extend24"] = _extend24_script(cfg, paths, pids["pid"], pids["watcher_pid"], pids["rolling_pid"])
+        scripts["extend24"] = _extend24_script(
+            cfg, paths, pids["pid"], pids["watcher_pid"], pids["rolling_pid"]
+        )
     _write(paths["extend24_script"], scripts["extend24"])
 
     if start:
@@ -244,7 +257,10 @@ def write_launch_artifacts(
         "safety": "public CLOB/Gamma reads only; no private keys, signing, order submission, or cancellation",
     }
     manifest_path = Path(cfg.state_dir) / f"{safe}_background_latest.json"
-    _write(manifest_path, json.dumps(_json_safe(manifest), indent=2, allow_nan=False) + "\n")
+    _write(
+        manifest_path,
+        json.dumps(_json_safe(manifest), indent=2, allow_nan=False) + "\n",
+    )
     return manifest
 
 
@@ -334,45 +350,74 @@ def _collector_script(cfg: LaunchCandidateConfig, p: dict[str, Path]) -> str:
     )
 
 
-def _watcher_script(cfg: LaunchCandidateConfig, p: dict[str, Path], collector_pid: int) -> str:
+def _watcher_script(
+    cfg: LaunchCandidateConfig, p: dict[str, Path], collector_pid: int
+) -> str:
     return "\n".join(
         [
             "$ErrorActionPreference='Continue'",
             _vars(cfg, p),
             f"$CollectorPid={int(collector_pid)}",
-            "function Add-Log($Message) { \"$(Get-Date -Format o) $Message\" | Add-Content -LiteralPath $WatcherLog }",
+            'function Add-Log($Message) { "$(Get-Date -Format o) $Message" | Add-Content -LiteralPath $WatcherLog }',
             "function Refresh-Depth($Label) {",
             "  try {",
-            "    if (-not (Test-Path $Snapshot) -or -not (Test-Path $Quotes)) { Add-Log \"refresh_skip label=$Label no_csv_yet\"; return }",
-            "    Add-Log \"refresh_start label=$Label\"; Push-Location $Repo",
-            _update_target_command(cfg, "$StatusDir", "$History", cfg.bootstrap_resamples_watch, 6, "$WatcherLog"),
+            '    if (-not (Test-Path $Snapshot) -or -not (Test-Path $Quotes)) { Add-Log "refresh_skip label=$Label no_csv_yet"; return }',
+            '    Add-Log "refresh_start label=$Label"; Push-Location $Repo',
+            _update_target_command(
+                cfg,
+                "$StatusDir",
+                "$History",
+                cfg.bootstrap_resamples_watch,
+                6,
+                "$WatcherLog",
+            ),
             _rescue_command(cfg, "$RescueJson", "$RescueMd", "$WatcherLog"),
-            _depth_command(cfg, "$(Join-Path $StatusDir 'target_status.json')", "$RescueJson", "$GateJson", "$GateMd", 6, cfg.min_quote_rows_6h, cfg.min_book_scenarios_6h, "$WatcherLog"),
-            "    Pop-Location; Add-Log \"refresh_done label=$Label\"",
-            "  } catch { Add-Log \"refresh_error label=$Label error=$($_.Exception.Message)\"; try { Pop-Location } catch {} }",
+            _depth_command(
+                cfg,
+                "$(Join-Path $StatusDir 'target_status.json')",
+                "$RescueJson",
+                "$GateJson",
+                "$GateMd",
+                6,
+                cfg.min_quote_rows_6h,
+                cfg.min_book_scenarios_6h,
+                "$WatcherLog",
+            ),
+            '    Pop-Location; Add-Log "refresh_done label=$Label"',
+            '  } catch { Add-Log "refresh_error label=$Label error=$($_.Exception.Message)"; try { Pop-Location } catch {} }',
             "}",
-            "Add-Log \"watcher_start collector_pid=$CollectorPid\"",
-            "for ($i=0; $i -lt 80; $i++) { Refresh-Depth \"loop_$i\"; if ($CollectorPid -gt 0 -and -not (Get-Process -Id $CollectorPid -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Seconds $IntervalSeconds }",
+            'Add-Log "watcher_start collector_pid=$CollectorPid"',
+            'for ($i=0; $i -lt 80; $i++) { Refresh-Depth "loop_$i"; if ($CollectorPid -gt 0 -and -not (Get-Process -Id $CollectorPid -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Seconds $IntervalSeconds }',
             "Refresh-Depth 'final'; Add-Log 'watcher_exit'",
             "",
         ]
     )
 
 
-def _rolling_script(cfg: LaunchCandidateConfig, p: dict[str, Path], collector_pid: int) -> str:
+def _rolling_script(
+    cfg: LaunchCandidateConfig, p: dict[str, Path], collector_pid: int
+) -> str:
     return "\n".join(
         [
             "$ErrorActionPreference='Continue'",
             _vars(cfg, p),
             f"$CollectorPid={int(collector_pid)}",
-            "function Add-Log($Message) { \"$(Get-Date -Format o) $Message\" | Add-Content -LiteralPath $RollingLog }",
+            'function Add-Log($Message) { "$(Get-Date -Format o) $Message" | Add-Content -LiteralPath $RollingLog }',
             "try {",
-            "  Add-Log \"rolling_after6h_wait collector_pid=$CollectorPid\"",
+            '  Add-Log "rolling_after6h_wait collector_pid=$CollectorPid"',
             "  if ($CollectorPid -gt 0 -and (Get-Process -Id $CollectorPid -ErrorAction SilentlyContinue)) { Wait-Process -Id $CollectorPid }",
             "  Add-Log 'rolling_after6h_start'; Push-Location $Repo",
-            _rolling_command(cfg, "$RollingDir", cfg.bootstrap_resamples_rolling, 6, cfg.min_quote_rows_6h, cfg.min_book_scenarios_6h, "$RollingLog"),
+            _rolling_command(
+                cfg,
+                "$RollingDir",
+                cfg.bootstrap_resamples_rolling,
+                6,
+                cfg.min_quote_rows_6h,
+                cfg.min_book_scenarios_6h,
+                "$RollingLog",
+            ),
             "  Pop-Location; Add-Log 'rolling_after6h_done'",
-            "} catch { Add-Log \"rolling_after6h_error error=$($_.Exception.Message)\"; try { Pop-Location } catch {} }",
+            '} catch { Add-Log "rolling_after6h_error error=$($_.Exception.Message)"; try { Pop-Location } catch {} }',
             "",
         ]
     )
@@ -390,8 +435,8 @@ def _extend24_script(
             "$ErrorActionPreference='Continue'",
             _vars(cfg, p),
             f"$InitialCollectorProcessId={int(collector_pid)}; $InitialWatcherProcessId={int(watcher_pid)}; $InitialRollingProcessId={int(rolling_pid)}",
-            "function Add-Log($Message) { \"$(Get-Date -Format o) $Message\" | Add-Content -LiteralPath $Extend24Log }",
-            "function Wait-ForExit([int]$WaitProcessId,[string]$Label) { if ($WaitProcessId -le 0) { return }; while (Get-Process -Id $WaitProcessId -ErrorAction SilentlyContinue) { Add-Log \"wait label=$Label process_id=$WaitProcessId\"; Start-Sleep -Seconds 300 }; Add-Log \"done_wait label=$Label process_id=$WaitProcessId\" }",
+            'function Add-Log($Message) { "$(Get-Date -Format o) $Message" | Add-Content -LiteralPath $Extend24Log }',
+            'function Wait-ForExit([int]$WaitProcessId,[string]$Label) { if ($WaitProcessId -le 0) { return }; while (Get-Process -Id $WaitProcessId -ErrorAction SilentlyContinue) { Add-Log "wait label=$Label process_id=$WaitProcessId"; Start-Sleep -Seconds 300 }; Add-Log "done_wait label=$Label process_id=$WaitProcessId" }',
             "Add-Log 'extend24_start safety=public_reads_only_no_keys_no_orders'",
             "Wait-ForExit $InitialCollectorProcessId 'initial_collector'; Wait-ForExit $InitialWatcherProcessId 'initial_watcher'; Wait-ForExit $InitialRollingProcessId 'initial_rolling6h'",
             "Push-Location $Repo; Add-Log 'extension_collector_start'",
@@ -439,10 +484,37 @@ def _extend24_script(
                 residual=cfg.partial_rescue_max_residual_loss_usdc,
             ),
             'Add-Log "extension_collector_exit code=$LASTEXITCODE"; Add-Log "after24_audit_start"',
-            _update_target_command(cfg, "$After24StatusDir", "$After24History", cfg.bootstrap_resamples_after24, 24, "$Extend24Log"),
-            _rescue_command(cfg, "$After24RescueJson", "$After24RescueMd", "$Extend24Log"),
-            _depth_command(cfg, "$(Join-Path $After24StatusDir 'target_status.json')", "$After24RescueJson", "$After24GateJson", "$After24GateMd", 24, cfg.min_quote_rows_24h, cfg.min_book_scenarios_24h, "$Extend24Log"),
-            _rolling_command(cfg, "$After24RollingDir", cfg.bootstrap_resamples_after24, 6, cfg.min_quote_rows_6h, cfg.min_book_scenarios_6h, "$Extend24Log"),
+            _update_target_command(
+                cfg,
+                "$After24StatusDir",
+                "$After24History",
+                cfg.bootstrap_resamples_after24,
+                24,
+                "$Extend24Log",
+            ),
+            _rescue_command(
+                cfg, "$After24RescueJson", "$After24RescueMd", "$Extend24Log"
+            ),
+            _depth_command(
+                cfg,
+                "$(Join-Path $After24StatusDir 'target_status.json')",
+                "$After24RescueJson",
+                "$After24GateJson",
+                "$After24GateMd",
+                24,
+                cfg.min_quote_rows_24h,
+                cfg.min_book_scenarios_24h,
+                "$Extend24Log",
+            ),
+            _rolling_command(
+                cfg,
+                "$After24RollingDir",
+                cfg.bootstrap_resamples_after24,
+                6,
+                cfg.min_quote_rows_6h,
+                cfg.min_book_scenarios_6h,
+                "$Extend24Log",
+            ),
             "& $Python scripts\\shadow_telemetry.py --snapshots $Snapshot --quotes $Quotes --out-dir $After24ShadowDir --paid-reward-capture-rate 0.0 >> $Extend24Log 2>&1",
             "Pop-Location; Add-Log 'after24_audit_done'",
             "",
@@ -511,7 +583,9 @@ def _update_target_command(
     )
 
 
-def _rescue_command(cfg: LaunchCandidateConfig, out_json: str, out_md: str, log_var: str) -> str:
+def _rescue_command(
+    cfg: LaunchCandidateConfig, out_json: str, out_md: str, log_var: str
+) -> str:
     return (
         f"    & $Python scripts\\rescue_stress.py --quotes $Quotes --out {out_json} --markdown-out {out_md} "
         f"--initial-capital {cfg.initial_capital} --require-taker-residual-loss "
@@ -576,7 +650,9 @@ def _start_powershell(script: Path) -> int:
         f"-ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',{_ps_quote(str(script))}) "
         "-WindowStyle Hidden -PassThru; $p.Id"
     )
-    out = subprocess.check_output(["powershell", "-NoProfile", "-Command", command], text=True)
+    out = subprocess.check_output(
+        ["powershell", "-NoProfile", "-Command", command], text=True
+    )
     return int(out.strip().splitlines()[-1])
 
 

@@ -4,6 +4,7 @@
 This is a local auditor only. It reads JSON files and writes JSON/Markdown
 artifacts. It never signs, submits, cancels, or inspects private keys.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,7 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from polymarket_lp.deployment_gate import DeploymentReadinessConfig, evaluate_deployment_readiness
+from polymarket_lp.deployment_gate import (
+    DeploymentReadinessConfig,
+    evaluate_deployment_readiness,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -66,7 +70,10 @@ def main() -> None:
     if args.out:
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(_json_safe(result), indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        out.write_text(
+            json.dumps(_json_safe(result), indent=2, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
     markdown = _markdown(result)
     if args.markdown_out:
         md = Path(args.markdown_out)
@@ -74,7 +81,11 @@ def main() -> None:
         md.write_text(markdown, encoding="utf-8")
         if args.downloads_copy:
             shutil.copyfile(md, args.downloads_copy)
-    print(json.dumps({"status": result["status"], "blockers": result["blockers"]}, indent=2))
+    print(
+        json.dumps(
+            {"status": result["status"], "blockers": result["blockers"]}, indent=2
+        )
+    )
 
 
 def _load_json(path: str) -> dict[str, object]:

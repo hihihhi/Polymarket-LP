@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build a read-only leaderboard across LP public-paper candidates."""
+
 from __future__ import annotations
 
 import argparse
@@ -13,12 +14,17 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from polymarket_lp.candidate_leaderboard import CandidateEvidence, build_candidate_leaderboard  # noqa: E402
+from polymarket_lp.candidate_leaderboard import (  # noqa: E402
+    CandidateEvidence,
+    build_candidate_leaderboard,
+)
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--candidate", action="append", required=True, help="NAME=depth_gate.json")
+    p.add_argument(
+        "--candidate", action="append", required=True, help="NAME=depth_gate.json"
+    )
     p.add_argument("--metadata", action="append", default=[], help="NAME=metadata.json")
     p.add_argument("--out", required=True)
     p.add_argument("--markdown-out", required=True)
@@ -32,15 +38,28 @@ def main() -> None:
     for item in args.candidate:
         name, path = _split_named_path(item, "--candidate")
         gate = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-        candidates.append(CandidateEvidence(name=name, gate=gate, metadata=metadata.get(name, {})))
+        candidates.append(
+            CandidateEvidence(name=name, gate=gate, metadata=metadata.get(name, {}))
+        )
     result = build_candidate_leaderboard(candidates)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(_json_safe(result), indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    out.write_text(
+        json.dumps(_json_safe(result), indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
     md = Path(args.markdown_out)
     md.parent.mkdir(parents=True, exist_ok=True)
     md.write_text(_markdown(result), encoding="utf-8")
-    print(json.dumps({"status": result["status"], "leader": result.get("leader", {}).get("name")}, indent=2))
+    print(
+        json.dumps(
+            {
+                "status": result["status"],
+                "leader": result.get("leader", {}).get("name"),
+            },
+            indent=2,
+        )
+    )
 
 
 def _load_named_paths(items: list[str]) -> dict[str, dict[str, Any]]:

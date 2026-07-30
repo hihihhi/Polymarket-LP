@@ -24,3 +24,11 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["polymarket_lp*"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.0",
+]
+
+[tool.ruff.lint]
+select = ["F", "I"]

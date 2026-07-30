@@ -41,16 +41,40 @@ def evaluate_deployment_readiness(
     target_math = _dict(monitor.get("target_math"))
     monitor_input = _dict(monitor.get("input"))
 
-    observed_hours = _float(monitor_input.get("duration_hours", paper.get("duration_hours")), 0.0)
-    unique_markets = int(_float(monitor_input.get("unique_markets_quoted", paper.get("unique_markets_quoted")), 0.0))
-    max_active = _float(monitor_input.get("max_active_pair_notional", paper.get("max_active_pair_notional")), math.inf)
-    cash_reserve = cfg.initial_capital - max_active if math.isfinite(max_active) else -math.inf
-    cash_reserve_fraction = cash_reserve / cfg.initial_capital if cfg.initial_capital > 0 else -math.inf
+    observed_hours = _float(
+        monitor_input.get("duration_hours", paper.get("duration_hours")), 0.0
+    )
+    unique_markets = int(
+        _float(
+            monitor_input.get(
+                "unique_markets_quoted", paper.get("unique_markets_quoted")
+            ),
+            0.0,
+        )
+    )
+    max_active = _float(
+        monitor_input.get(
+            "max_active_pair_notional", paper.get("max_active_pair_notional")
+        ),
+        math.inf,
+    )
+    cash_reserve = (
+        cfg.initial_capital - max_active if math.isfinite(max_active) else -math.inf
+    )
+    cash_reserve_fraction = (
+        cash_reserve / cfg.initial_capital if cfg.initial_capital > 0 else -math.inf
+    )
     net_monthly = _float(target_math.get("net_monthly_after_loss_haircut"), math.nan)
     capture_needed = _float(target_math.get("capture_needed_for_target"), math.inf)
-    fill_proxy = _float(monitor_input.get("fill_proxy_rate", paper.get("fill_proxy_rate")), math.inf)
-    stale_fill = _float(monitor_input.get("stale_fill_rate", paper.get("stale_fill_rate")), math.inf)
-    pending_quote = _float(monitor_input.get("pending_quote_rate", paper.get("pending_quote_rate")), 0.0)
+    fill_proxy = _float(
+        monitor_input.get("fill_proxy_rate", paper.get("fill_proxy_rate")), math.inf
+    )
+    stale_fill = _float(
+        monitor_input.get("stale_fill_rate", paper.get("stale_fill_rate")), math.inf
+    )
+    pending_quote = _float(
+        monitor_input.get("pending_quote_rate", paper.get("pending_quote_rate")), 0.0
+    )
     max_abs_mid_change = _float(paper.get("max_abs_mid_change_to_next"), 0.0)
 
     captured_p05 = _capture_p05(target_status, cfg.required_capture_rate)
@@ -62,14 +86,35 @@ def evaluate_deployment_readiness(
     gates = {
         "density_gate_passed": bool(target_gates.get("density_gate_passed", False)),
         "capture_gate_passed": bool(target_gates.get("capture_gate_passed", False)),
-        "risk_proxy_gate_passed": bool(target_gates.get("risk_proxy_gate_passed", False)),
+        "risk_proxy_gate_passed": bool(
+            target_gates.get("risk_proxy_gate_passed", False)
+        ),
         "pending_quote_gate_passed": bool(pending_quote <= cfg.max_pending_quote_rate),
-        "mid_move_gate_passed": bool(max_abs_mid_change <= cfg.max_abs_mid_change_to_next),
-        "diversification_gate_passed": bool(target_gates.get("diversification_gate_passed", unique_markets >= cfg.min_unique_markets)),
-        "active_notional_gate_passed": bool(target_gates.get("active_notional_gate_passed", max_active <= cfg.max_active_pair_notional)),
-        "cash_reserve_gate_passed": bool(cash_reserve_fraction >= cfg.min_cash_reserve_fraction),
-        "sample_gate_passed": bool(target_gates.get("sample_gate_passed", observed_hours >= cfg.min_observation_hours)),
-        "capture_stress_gate_passed": bool(math.isfinite(captured_p05) and captured_p05 >= target_threshold),
+        "mid_move_gate_passed": bool(
+            max_abs_mid_change <= cfg.max_abs_mid_change_to_next
+        ),
+        "diversification_gate_passed": bool(
+            target_gates.get(
+                "diversification_gate_passed", unique_markets >= cfg.min_unique_markets
+            )
+        ),
+        "active_notional_gate_passed": bool(
+            target_gates.get(
+                "active_notional_gate_passed",
+                max_active <= cfg.max_active_pair_notional,
+            )
+        ),
+        "cash_reserve_gate_passed": bool(
+            cash_reserve_fraction >= cfg.min_cash_reserve_fraction
+        ),
+        "sample_gate_passed": bool(
+            target_gates.get(
+                "sample_gate_passed", observed_hours >= cfg.min_observation_hours
+            )
+        ),
+        "capture_stress_gate_passed": bool(
+            math.isfinite(captured_p05) and captured_p05 >= target_threshold
+        ),
         "telemetry_gate_passed": bool((not cfg.require_telemetry) or telemetry_passed),
     }
     gates["deployment_ready"] = bool(all(gates.values()))
@@ -95,7 +140,9 @@ def evaluate_deployment_readiness(
         },
         "gates": gates,
         "blockers": blockers,
-        "status": "deployment_ready" if gates["deployment_ready"] else "deployment_not_ready",
+        "status": "deployment_ready"
+        if gates["deployment_ready"]
+        else "deployment_not_ready",
         "safety": "readiness audit only; no private keys, order signing, order submission, or cancellation",
     }
 
@@ -104,13 +151,21 @@ def _capture_p05(target_status: dict[str, Any], required_capture_rate: float) ->
     stress = target_status.get("capture_stress_grid")
     if isinstance(stress, list):
         for row in stress:
-            if isinstance(row, dict) and abs(_float(row.get("capture_rate"), -1.0) - required_capture_rate) < 1e-12:
+            if (
+                isinstance(row, dict)
+                and abs(_float(row.get("capture_rate"), -1.0) - required_capture_rate)
+                < 1e-12
+            ):
                 return _float(row.get("captured_net_monthly_p05"), math.nan)
     bootstrap = _dict(target_status.get("bootstrap_target"))
     if abs(_float(bootstrap.get("capture_rate"), -1.0) - required_capture_rate) < 1e-12:
         return _float(bootstrap.get("captured_net_monthly_p05"), math.nan)
     raw = _float(bootstrap.get("net_monthly_p05"), math.nan)
-    return raw * max(0.0, min(1.0, required_capture_rate)) if math.isfinite(raw) else math.nan
+    return (
+        raw * max(0.0, min(1.0, required_capture_rate))
+        if math.isfinite(raw)
+        else math.nan
+    )
 
 
 def _blockers(gates: dict[str, bool], cfg: DeploymentReadinessConfig) -> list[str]:

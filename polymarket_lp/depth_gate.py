@@ -39,50 +39,81 @@ def evaluate_depth_readiness(
     monitor = _dict(target_status.get("target_monitor"))
     monitor_input = _dict(monitor.get("input"))
     target_math = _dict(monitor.get("target_math"))
-    bootstrap = _dict(target_status.get("bootstrap_target"))
     rescue_metrics = _dict(rescue_stress.get("metrics"))
 
-    duration_hours = _float(monitor_input.get("duration_hours", paper.get("duration_hours")), 0.0)
-    quote_rows = int(_float(monitor_input.get("quote_rows", paper.get("quote_rows")), 0.0))
-    unique_markets = int(_float(monitor_input.get("unique_markets_quoted", paper.get("unique_markets_quoted")), 0.0))
+    duration_hours = _float(
+        monitor_input.get("duration_hours", paper.get("duration_hours")), 0.0
+    )
+    quote_rows = int(
+        _float(monitor_input.get("quote_rows", paper.get("quote_rows")), 0.0)
+    )
+    unique_markets = int(
+        _float(
+            monitor_input.get(
+                "unique_markets_quoted", paper.get("unique_markets_quoted")
+            ),
+            0.0,
+        )
+    )
     book_counts = _dict(paper.get("quote_data_quality_counts"))
-    clob_rows = sum(int(_float(v, 0.0)) for key, v in book_counts.items() if str(key).startswith("clob_book"))
+    clob_rows = sum(
+        int(_float(v, 0.0))
+        for key, v in book_counts.items()
+        if str(key).startswith("clob_book")
+    )
     total_quality_rows = sum(int(_float(v, 0.0)) for v in book_counts.values())
     clob_quality_rate = clob_rows / max(total_quality_rows, 1)
 
     income_p05 = _capture_p05(target_status, cfg.required_capture_rate)
     if not math.isfinite(income_p05):
-        income_p05 = _float(target_math.get("net_monthly_after_loss_haircut"), math.nan) * max(
-            0.0, min(1.0, cfg.required_capture_rate)
-        )
+        income_p05 = _float(
+            target_math.get("net_monthly_after_loss_haircut"), math.nan
+        ) * max(0.0, min(1.0, cfg.required_capture_rate))
 
     book_scenarios = int(_float(rescue_metrics.get("taker_rescue_book_scenarios"), 0.0))
     taker_rate = _float(rescue_metrics.get("taker_rescue_feasible_rate"), math.nan)
-    min_edge = _float(rescue_metrics.get("taker_rescue_min_pair_edge_per_share"), math.nan)
+    min_edge = _float(
+        rescue_metrics.get("taker_rescue_min_pair_edge_per_share"), math.nan
+    )
     min_depth = _float(rescue_metrics.get("taker_rescue_min_depth_fraction"), math.nan)
-    residual_loss = _float(rescue_metrics.get("latest_taker_residual_loss_to_zero"), math.nan)
-    residual_loss_fraction = _float(rescue_metrics.get("latest_taker_residual_loss_fraction"), math.nan)
-    size_weighted_rescue_fraction = _float(rescue_metrics.get("taker_size_weighted_rescue_fraction"), math.nan)
-    depth_gate_passed = math.isfinite(min_depth) and min_depth >= cfg.min_taker_rescue_depth_fraction - 1e-12
+    residual_loss = _float(
+        rescue_metrics.get("latest_taker_residual_loss_to_zero"), math.nan
+    )
+    residual_loss_fraction = _float(
+        rescue_metrics.get("latest_taker_residual_loss_fraction"), math.nan
+    )
+    size_weighted_rescue_fraction = _float(
+        rescue_metrics.get("taker_size_weighted_rescue_fraction"), math.nan
+    )
+    depth_gate_passed = (
+        math.isfinite(min_depth)
+        and min_depth >= cfg.min_taker_rescue_depth_fraction - 1e-12
+    )
     tolerance = 1e-12
     residual_gate_passed = (
         math.isfinite(residual_loss_fraction)
-        and residual_loss_fraction <= cfg.max_latest_taker_residual_loss_fraction + tolerance
+        and residual_loss_fraction
+        <= cfg.max_latest_taker_residual_loss_fraction + tolerance
     )
 
     gates = {
-        "income_p05_gate_passed": math.isfinite(income_p05) and income_p05 >= cfg.target_monthly_usdc - tolerance,
-        "sample_hours_gate_passed": duration_hours >= cfg.min_observation_hours - tolerance,
+        "income_p05_gate_passed": math.isfinite(income_p05)
+        and income_p05 >= cfg.target_monthly_usdc - tolerance,
+        "sample_hours_gate_passed": duration_hours
+        >= cfg.min_observation_hours - tolerance,
         "quote_rows_gate_passed": quote_rows >= cfg.min_quote_rows,
         "diversification_gate_passed": unique_markets >= cfg.min_unique_markets,
-        "clob_quality_gate_passed": (not cfg.require_clob_book_quality) or clob_quality_rate >= 0.99,
+        "clob_quality_gate_passed": (not cfg.require_clob_book_quality)
+        or clob_quality_rate >= 0.99,
         "book_scenario_gate_passed": book_scenarios >= cfg.min_book_scenarios,
         "taker_rescue_rate_gate_passed": math.isfinite(taker_rate)
         and taker_rate >= cfg.min_taker_rescue_feasible_rate - tolerance,
         "taker_pair_edge_gate_passed": math.isfinite(min_edge)
         and min_edge >= cfg.min_taker_rescue_pair_edge_per_share - tolerance,
-        "taker_depth_gate_passed": depth_gate_passed or (cfg.allow_partial_taker_rescue and residual_gate_passed),
-        "taker_residual_loss_gate_passed": (not cfg.allow_partial_taker_rescue) or residual_gate_passed,
+        "taker_depth_gate_passed": depth_gate_passed
+        or (cfg.allow_partial_taker_rescue and residual_gate_passed),
+        "taker_residual_loss_gate_passed": (not cfg.allow_partial_taker_rescue)
+        or residual_gate_passed,
     }
     gates["depth_ready"] = bool(all(gates.values()))
     return {
@@ -111,16 +142,24 @@ def evaluate_depth_readiness(
 
 
 def _capture_p05(target_status: dict[str, Any], required_capture_rate: float) -> float:
+    bootstrap = _dict(target_status.get("bootstrap_target"))
     stress = target_status.get("capture_stress_grid")
     if isinstance(stress, list):
         for row in stress:
-            if isinstance(row, dict) and abs(_float(row.get("capture_rate"), -1.0) - required_capture_rate) < 1e-12:
+            if (
+                isinstance(row, dict)
+                and abs(_float(row.get("capture_rate"), -1.0) - required_capture_rate)
+                < 1e-12
+            ):
                 return _float(row.get("captured_net_monthly_p05"), math.nan)
-    bootstrap = _dict(target_status.get("bootstrap_target"))
     if abs(_float(bootstrap.get("capture_rate"), -1.0) - required_capture_rate) < 1e-12:
         return _float(bootstrap.get("captured_net_monthly_p05"), math.nan)
     raw = _float(bootstrap.get("net_monthly_p05"), math.nan)
-    return raw * max(0.0, min(1.0, required_capture_rate)) if math.isfinite(raw) else math.nan
+    return (
+        raw * max(0.0, min(1.0, required_capture_rate))
+        if math.isfinite(raw)
+        else math.nan
+    )
 
 
 def _blockers(gates: dict[str, bool], cfg: DepthReadinessConfig) -> list[str]:

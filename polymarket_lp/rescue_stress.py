@@ -33,7 +33,9 @@ class RescueStressConfig:
     max_latest_taker_residual_loss_fraction: float = 0.05
 
 
-def evaluate_rescue_stress(quotes: pd.DataFrame, cfg: RescueStressConfig | None = None) -> dict[str, Any]:
+def evaluate_rescue_stress(
+    quotes: pd.DataFrame, cfg: RescueStressConfig | None = None
+) -> dict[str, Any]:
     cfg = cfg or RescueStressConfig()
     q = _normalise_quotes(quotes)
     if q.empty:
@@ -60,22 +62,41 @@ def evaluate_rescue_stress(quotes: pd.DataFrame, cfg: RescueStressConfig | None 
     latest_ts = scenarios["timestamp"].max()
     latest = scenarios[scenarios["timestamp"].eq(latest_ts)].copy()
     latest_market = pd.DataFrame(
-        [_latest_market_row(group) for _, group in latest.groupby("condition_id", dropna=False)]
+        [
+            _latest_market_row(group)
+            for _, group in latest.groupby("condition_id", dropna=False)
+        ]
     )
 
     scenario_count = int(len(scenarios))
     feasible = scenarios["rescue_price_feasible"].astype(bool)
     loss = scenarios["one_sided_loss_to_zero"]
-    latest_blocked_loss = float(latest_market["blocked_loss_to_zero"].sum()) if not latest_market.empty else 0.0
-    latest_worst_loss = float(latest_market["worst_one_sided_loss_to_zero"].sum()) if not latest_market.empty else 0.0
-    latest_exit_loss = float(latest_market["immediate_exit_loss_if_rescue_fails"].sum()) if not latest_market.empty else 0.0
+    latest_blocked_loss = (
+        float(latest_market["blocked_loss_to_zero"].sum())
+        if not latest_market.empty
+        else 0.0
+    )
+    latest_worst_loss = (
+        float(latest_market["worst_one_sided_loss_to_zero"].sum())
+        if not latest_market.empty
+        else 0.0
+    )
+    latest_exit_loss = (
+        float(latest_market["immediate_exit_loss_if_rescue_fails"].sum())
+        if not latest_market.empty
+        else 0.0
+    )
     p05_edge = _quantile(scenarios.loc[feasible, "pair_edge_per_share"], 0.05)
     min_edge = _finite_min(scenarios.loc[feasible, "pair_edge_per_share"])
     taker_known = scenarios["taker_rescue_has_book"].astype(bool)
     taker_feasible = scenarios["taker_rescue_feasible"].astype(bool)
     taker_partial = scenarios["taker_partial_rescue_feasible"].astype(bool)
     taker_edge = scenarios.loc[taker_known, "taker_pair_edge_per_share"]
-    taker_rate = float(taker_feasible[taker_known].mean()) if bool(taker_known.any()) else math.nan
+    taker_rate = (
+        float(taker_feasible[taker_known].mean())
+        if bool(taker_known.any())
+        else math.nan
+    )
     size_total = float(scenarios["size_shares"].sum())
     taker_fillable_size = float(scenarios["taker_rescue_fillable_size"].sum())
     residual_loss = scenarios["taker_residual_loss_to_zero"]
@@ -83,10 +104,14 @@ def evaluate_rescue_stress(quotes: pd.DataFrame, cfg: RescueStressConfig | None 
         float(loss[feasible].sum() / loss.sum()) if float(loss.sum()) > 0 else math.nan
     )
     latest_taker_residual_loss = (
-        float(latest_market["worst_taker_residual_loss_to_zero"].sum()) if not latest_market.empty else 0.0
+        float(latest_market["worst_taker_residual_loss_to_zero"].sum())
+        if not latest_market.empty
+        else 0.0
     )
     latest_taker_residual_exit_loss = (
-        float(latest_market["worst_taker_residual_immediate_exit_loss"].sum()) if not latest_market.empty else 0.0
+        float(latest_market["worst_taker_residual_immediate_exit_loss"].sum())
+        if not latest_market.empty
+        else 0.0
     )
     metrics = {
         "scenario_count": scenario_count,
@@ -106,20 +131,35 @@ def evaluate_rescue_stress(quotes: pd.DataFrame, cfg: RescueStressConfig | None 
         "latest_immediate_exit_loss_fraction": latest_exit_loss / cfg.initial_capital
         if cfg.initial_capital > 0
         else math.inf,
-        "latest_rescueable_loss_to_zero": max(0.0, latest_worst_loss - latest_blocked_loss),
+        "latest_rescueable_loss_to_zero": max(
+            0.0, latest_worst_loss - latest_blocked_loss
+        ),
         "taker_rescue_book_scenarios": int(taker_known.sum()),
         "taker_rescue_feasible_rate": taker_rate,
         "taker_rescue_min_pair_edge_per_share": _finite_min(taker_edge),
-        "taker_rescue_min_depth_fraction": _finite_min(scenarios.loc[taker_known, "taker_depth_fraction"]),
-        "taker_partial_rescue_feasible_rate": float(taker_partial.mean()) if scenario_count else math.nan,
-        "taker_size_weighted_rescue_fraction": taker_fillable_size / size_total if size_total > 0 else math.nan,
-        "taker_loss_weighted_rescue_fraction": (
-            float((loss - residual_loss).sum() / loss.sum()) if float(loss.sum()) > 0 else math.nan
+        "taker_rescue_min_depth_fraction": _finite_min(
+            scenarios.loc[taker_known, "taker_depth_fraction"]
         ),
-        "taker_rescued_size_fraction_p05": _quantile(scenarios["taker_rescued_size_fraction"], 0.05),
-        "taker_rescued_size_fraction_min": _finite_min(scenarios["taker_rescued_size_fraction"]),
+        "taker_partial_rescue_feasible_rate": float(taker_partial.mean())
+        if scenario_count
+        else math.nan,
+        "taker_size_weighted_rescue_fraction": taker_fillable_size / size_total
+        if size_total > 0
+        else math.nan,
+        "taker_loss_weighted_rescue_fraction": (
+            float((loss - residual_loss).sum() / loss.sum())
+            if float(loss.sum()) > 0
+            else math.nan
+        ),
+        "taker_rescued_size_fraction_p05": _quantile(
+            scenarios["taker_rescued_size_fraction"], 0.05
+        ),
+        "taker_rescued_size_fraction_min": _finite_min(
+            scenarios["taker_rescued_size_fraction"]
+        ),
         "latest_taker_residual_loss_to_zero": latest_taker_residual_loss,
-        "latest_taker_residual_loss_fraction": latest_taker_residual_loss / cfg.initial_capital
+        "latest_taker_residual_loss_fraction": latest_taker_residual_loss
+        / cfg.initial_capital
         if cfg.initial_capital > 0
         else math.inf,
         "latest_taker_residual_immediate_exit_loss": latest_taker_residual_exit_loss,
@@ -130,12 +170,16 @@ def evaluate_rescue_stress(quotes: pd.DataFrame, cfg: RescueStressConfig | None 
     }
     tolerance = 1e-12
     gates = {
-        "price_feasible_rate_passed": metrics["price_feasible_rate"] >= cfg.min_price_feasible_rate - tolerance,
+        "price_feasible_rate_passed": metrics["price_feasible_rate"]
+        >= cfg.min_price_feasible_rate - tolerance,
         "latest_blocked_loss_gate_passed": metrics["latest_blocked_loss_fraction"]
         <= cfg.max_latest_blocked_loss_fraction + tolerance,
-        "immediate_exit_loss_gate_passed": metrics["latest_immediate_exit_loss_fraction"]
+        "immediate_exit_loss_gate_passed": metrics[
+            "latest_immediate_exit_loss_fraction"
+        ]
         <= cfg.max_immediate_exit_loss_fraction + tolerance,
-        "pair_edge_gate_passed": min_edge >= cfg.rescue_min_pair_edge_per_share - tolerance,
+        "pair_edge_gate_passed": min_edge
+        >= cfg.rescue_min_pair_edge_per_share - tolerance,
         "taker_rescue_depth_gate_passed": (not cfg.require_taker_rescue_depth)
         or (
             metrics["taker_rescue_book_scenarios"] > 0
@@ -157,7 +201,9 @@ def evaluate_rescue_stress(quotes: pd.DataFrame, cfg: RescueStressConfig | None 
         "blockers": _blockers(gates, cfg),
         "scenario_sample": _json_records(scenarios.tail(20)),
         "latest_market_stress": _json_records(latest_market),
-        "status": "rescue_stress_passed" if gates["rescue_stress_passed"] else "rescue_stress_failed",
+        "status": "rescue_stress_passed"
+        if gates["rescue_stress_passed"]
+        else "rescue_stress_failed",
         "interpretation": {
             "proof_type": "price-feasible rescue stress, not executable fill proof",
             "taker_rescue_note": (
@@ -192,19 +238,23 @@ def _normalise_quotes(quotes: pd.DataFrame) -> pd.DataFrame:
     q["bid_price"] = pd.to_numeric(q["bid_price"], errors="coerce")
     q["size_shares"] = pd.to_numeric(q["size_shares"], errors="coerce")
     if "quote_offset" in q:
-        q["quote_offset"] = pd.to_numeric(q["quote_offset"], errors="coerce").fillna(0.0)
+        q["quote_offset"] = pd.to_numeric(q["quote_offset"], errors="coerce").fillna(
+            0.0
+        )
     else:
         q["quote_offset"] = 0.0
     if "cluster" not in q:
         q["cluster"] = "unknown"
-    return q.dropna(subset=["timestamp", "condition_id", "side", "bid_price", "size_shares"]).sort_values(
-        ["timestamp", "condition_id", "side"]
-    )
+    return q.dropna(
+        subset=["timestamp", "condition_id", "side", "bid_price", "size_shares"]
+    ).sort_values(["timestamp", "condition_id", "side"])
 
 
 def _scenario_frame(q: pd.DataFrame, cfg: RescueStressConfig) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
-    for (ts, condition_id), group in q.groupby(["timestamp", "condition_id"], sort=True):
+    for (ts, condition_id), group in q.groupby(
+        ["timestamp", "condition_id"], sort=True
+    ):
         yes = group[group["side"].eq("YES")]
         no = group[group["side"].eq("NO")]
         if yes.empty or no.empty:
@@ -231,18 +281,35 @@ def _scenario_frame(q: pd.DataFrame, cfg: RescueStressConfig) -> pd.DataFrame:
             pair_cost = entry + rescue_bid if feasible else math.nan
             edge = 1.0 - pair_cost if feasible else math.nan
             taker_pair_cost = entry + opp_ask if math.isfinite(opp_ask) else math.nan
-            taker_edge = 1.0 - taker_pair_cost if math.isfinite(taker_pair_cost) else math.nan
-            depth_fraction = opp_ask_size / size if size > 0 and math.isfinite(opp_ask_size) else math.nan
+            taker_edge = (
+                1.0 - taker_pair_cost if math.isfinite(taker_pair_cost) else math.nan
+            )
+            depth_fraction = (
+                opp_ask_size / size
+                if size > 0 and math.isfinite(opp_ask_size)
+                else math.nan
+            )
             taker_has_book = math.isfinite(opp_ask) and math.isfinite(opp_ask_size)
-            taker_depth_ok = taker_has_book and depth_fraction >= cfg.min_taker_rescue_depth_fraction
-            taker_edge_ok = taker_has_book and taker_edge >= cfg.taker_rescue_min_pair_edge_per_share - 1e-12
-            taker_fillable_size = min(size, max(0.0, opp_ask_size)) if taker_edge_ok else 0.0
-            taker_rescued_size_fraction = taker_fillable_size / size if size > 0 else math.nan
+            taker_depth_ok = (
+                taker_has_book and depth_fraction >= cfg.min_taker_rescue_depth_fraction
+            )
+            taker_edge_ok = (
+                taker_has_book
+                and taker_edge >= cfg.taker_rescue_min_pair_edge_per_share - 1e-12
+            )
+            taker_fillable_size = (
+                min(size, max(0.0, opp_ask_size)) if taker_edge_ok else 0.0
+            )
+            taker_rescued_size_fraction = (
+                taker_fillable_size / size if size > 0 else math.nan
+            )
             taker_residual_size = max(0.0, size - taker_fillable_size)
             taker_residual_loss = taker_residual_size * entry
             taker_residual_exit_loss = taker_residual_size * cfg.exit_slippage
             taker_partial_edge_usdc = (
-                taker_fillable_size * taker_edge if taker_fillable_size > 0 and math.isfinite(taker_edge) else 0.0
+                taker_fillable_size * taker_edge
+                if taker_fillable_size > 0 and math.isfinite(taker_edge)
+                else 0.0
             )
             rows.append(
                 {
@@ -259,10 +326,14 @@ def _scenario_frame(q: pd.DataFrame, cfg: RescueStressConfig) -> pd.DataFrame:
                     "rescue_bid": rescue_bid if feasible else math.nan,
                     "pair_cost": pair_cost,
                     "pair_edge_per_share": edge,
-                    "rescue_price_feasible": bool(feasible and edge >= cfg.rescue_min_pair_edge_per_share - 1e-12),
+                    "rescue_price_feasible": bool(
+                        feasible and edge >= cfg.rescue_min_pair_edge_per_share - 1e-12
+                    ),
                     "immediate_exit_loss": size * cfg.exit_slippage,
                     "taker_opposite_best_ask": opp_ask if taker_has_book else math.nan,
-                    "taker_opposite_best_ask_size": opp_ask_size if taker_has_book else math.nan,
+                    "taker_opposite_best_ask_size": opp_ask_size
+                    if taker_has_book
+                    else math.nan,
                     "taker_pair_cost": taker_pair_cost,
                     "taker_pair_edge_per_share": taker_edge,
                     "taker_depth_fraction": depth_fraction,
@@ -276,7 +347,9 @@ def _scenario_frame(q: pd.DataFrame, cfg: RescueStressConfig) -> pd.DataFrame:
                     "taker_residual_loss_to_zero": taker_residual_loss,
                     "taker_residual_immediate_exit_loss": taker_residual_exit_loss,
                     "taker_partial_pair_edge_usdc": taker_partial_edge_usdc,
-                    "taker_partial_rescue_feasible": bool(taker_edge_ok and taker_fillable_size > 0),
+                    "taker_partial_rescue_feasible": bool(
+                        taker_edge_ok and taker_fillable_size > 0
+                    ),
                 }
             )
     return pd.DataFrame(rows)
@@ -293,17 +366,31 @@ def _side_col_float(row: pd.Series, side: str, suffix: str) -> float:
 def _latest_market_row(group: pd.DataFrame) -> dict[str, Any]:
     worst = group.loc[group["one_sided_loss_to_zero"].idxmax()]
     blocked = group[~group["rescue_price_feasible"].astype(bool)]
-    blocked_loss = float(blocked["one_sided_loss_to_zero"].max()) if not blocked.empty else 0.0
+    blocked_loss = (
+        float(blocked["one_sided_loss_to_zero"].max()) if not blocked.empty else 0.0
+    )
     return {
-        "condition_id": str(worst.name) if "condition_id" not in worst else str(worst["condition_id"]),
+        "condition_id": str(worst.name)
+        if "condition_id" not in worst
+        else str(worst["condition_id"]),
         "cluster": str(worst.get("cluster", "unknown")),
         "worst_one_sided_loss_to_zero": float(group["one_sided_loss_to_zero"].max()),
         "blocked_loss_to_zero": blocked_loss,
-        "immediate_exit_loss_if_rescue_fails": float(group["immediate_exit_loss"].max()),
-        "worst_taker_residual_loss_to_zero": float(group["taker_residual_loss_to_zero"].max()),
-        "worst_taker_residual_immediate_exit_loss": float(group["taker_residual_immediate_exit_loss"].max()),
-        "min_taker_rescued_size_fraction": _finite_min(group["taker_rescued_size_fraction"]),
-        "taker_partial_pair_edge_usdc": float(group["taker_partial_pair_edge_usdc"].sum()),
+        "immediate_exit_loss_if_rescue_fails": float(
+            group["immediate_exit_loss"].max()
+        ),
+        "worst_taker_residual_loss_to_zero": float(
+            group["taker_residual_loss_to_zero"].max()
+        ),
+        "worst_taker_residual_immediate_exit_loss": float(
+            group["taker_residual_immediate_exit_loss"].max()
+        ),
+        "min_taker_rescued_size_fraction": _finite_min(
+            group["taker_rescued_size_fraction"]
+        ),
+        "taker_partial_pair_edge_usdc": float(
+            group["taker_partial_pair_edge_usdc"].sum()
+        ),
         "all_sides_rescue_price_feasible": bool(group["rescue_price_feasible"].all()),
         "all_sides_taker_rescue_feasible": bool(group["taker_rescue_feasible"].all()),
         "min_pair_edge_per_share": _finite_min(group["pair_edge_per_share"]),

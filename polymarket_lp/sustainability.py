@@ -43,17 +43,27 @@ def evaluate_sustainability_stress(
     risk = _dict(evidence_packet.get("risk"))
 
     selected_capture_p05 = _num(selected_metrics.get("captured_net_monthly_p05"))
-    selected_raw_p05 = selected_capture_p05 / cfg.reference_capture_rate if cfg.reference_capture_rate > 0 else math.nan
+    selected_raw_p05 = (
+        selected_capture_p05 / cfg.reference_capture_rate
+        if cfg.reference_capture_rate > 0
+        else math.nan
+    )
     packet_raw_p05 = _num(income.get("p05_monthly_raw"))
     if not math.isfinite(packet_raw_p05):
-        packet_raw_p05 = _num(income.get("p05_monthly_50pct_capture")) / cfg.reference_capture_rate
+        packet_raw_p05 = (
+            _num(income.get("p05_monthly_50pct_capture")) / cfg.reference_capture_rate
+        )
     base_raw_p05 = _choose_base(selected_raw_p05, packet_raw_p05, cfg.base_policy)
 
     selected_configured_loss = _num(selected_metrics.get("configured_cap_loss"), 0.0)
-    packet_configured_loss = _num(risk.get("configured_inventory_cap_loss_to_zero"), 0.0)
+    packet_configured_loss = _num(
+        risk.get("configured_inventory_cap_loss_to_zero"), 0.0
+    )
     configured_cap_loss = max(selected_configured_loss, packet_configured_loss)
     selected_unhedged_loss = _num(selected_metrics.get("unhedged_loss_to_zero"), 0.0)
-    packet_unhedged_loss = _num(risk.get("all_active_unhedged_one_side_loss_to_zero"), 0.0)
+    packet_unhedged_loss = _num(
+        risk.get("all_active_unhedged_one_side_loss_to_zero"), 0.0
+    )
     unhedged_loss = max(selected_unhedged_loss, packet_unhedged_loss)
     loss_shocks = _loss_shocks(cfg, configured_cap_loss, unhedged_loss)
 
@@ -75,20 +85,32 @@ def evaluate_sustainability_stress(
     configured_cap_reference_income = reference_income - configured_cap_loss
     configured_cap_recovery = _recovery_days(configured_cap_loss, reference_income, cfg)
     unhedged_recovery = _recovery_days(unhedged_loss, reference_income, cfg)
-    breakeven_reward_no_loss = _required_reward_multiplier(base_raw_p05, cfg.reference_capture_rate, 0.0, cfg)
+    breakeven_reward_no_loss = _required_reward_multiplier(
+        base_raw_p05, cfg.reference_capture_rate, 0.0, cfg
+    )
     breakeven_reward_configured = _required_reward_multiplier(
         base_raw_p05, cfg.reference_capture_rate, configured_cap_loss, cfg
     )
-    breakeven_reward_unhedged = _required_reward_multiplier(base_raw_p05, cfg.reference_capture_rate, unhedged_loss, cfg)
+    breakeven_reward_unhedged = _required_reward_multiplier(
+        base_raw_p05, cfg.reference_capture_rate, unhedged_loss, cfg
+    )
 
     gates = {
         "reference_income_passed": reference_income >= cfg.target_monthly_usdc,
-        "configured_cap_shock_income_passed": configured_cap_reference_income >= cfg.target_monthly_usdc,
-        "configured_cap_recovery_passed": configured_cap_recovery <= cfg.max_configured_cap_recovery_days,
-        "cash_reserve_passed": _num(selected_metrics.get("cash_reserve_fraction")) >= cfg.min_cash_reserve_fraction,
-        "unhedged_loss_fraction_passed": _num(selected_metrics.get("unhedged_loss_fraction")) <= cfg.max_unhedged_loss_fraction,
-        "unhedged_recovery_warning_passed": unhedged_recovery <= cfg.max_unhedged_recovery_days,
-        "breakeven_reward_margin_passed": breakeven_reward_configured <= cfg.max_required_reward_multiplier,
+        "configured_cap_shock_income_passed": configured_cap_reference_income
+        >= cfg.target_monthly_usdc,
+        "configured_cap_recovery_passed": configured_cap_recovery
+        <= cfg.max_configured_cap_recovery_days,
+        "cash_reserve_passed": _num(selected_metrics.get("cash_reserve_fraction"))
+        >= cfg.min_cash_reserve_fraction,
+        "unhedged_loss_fraction_passed": _num(
+            selected_metrics.get("unhedged_loss_fraction")
+        )
+        <= cfg.max_unhedged_loss_fraction,
+        "unhedged_recovery_warning_passed": unhedged_recovery
+        <= cfg.max_unhedged_recovery_days,
+        "breakeven_reward_margin_passed": breakeven_reward_configured
+        <= cfg.max_required_reward_multiplier,
     }
     required = [
         "reference_income_passed",
@@ -99,7 +121,11 @@ def evaluate_sustainability_stress(
         "breakeven_reward_margin_passed",
     ]
     blockers = _blockers(gates, cfg)
-    status = "sustainability_stress_passed" if all(gates[name] for name in required) else "sustainability_stress_failed"
+    status = (
+        "sustainability_stress_passed"
+        if all(gates[name] for name in required)
+        else "sustainability_stress_failed"
+    )
 
     return {
         "config": _config_dict(cfg),
@@ -115,7 +141,9 @@ def evaluate_sustainability_stress(
             "configured_cap_reference_monthly_after_loss": configured_cap_reference_income,
             "configured_cap_recovery_days": configured_cap_recovery,
             "unhedged_loss_usdc": unhedged_loss,
-            "unhedged_loss_fraction": unhedged_loss / cfg.initial_capital if cfg.initial_capital > 0 else math.inf,
+            "unhedged_loss_fraction": unhedged_loss / cfg.initial_capital
+            if cfg.initial_capital > 0
+            else math.inf,
             "unhedged_recovery_days": unhedged_recovery,
             "breakeven_reward_multiplier_no_loss_at_reference_capture": breakeven_reward_no_loss,
             "breakeven_reward_multiplier_configured_cap_at_reference_capture": breakeven_reward_configured,
@@ -181,7 +209,9 @@ def _choose_base(selected_raw: float, packet_raw: float, policy: str) -> float:
     if policy == "max_selected_packet":
         return max(values)
     if policy != "min_selected_packet":
-        raise ValueError("base_policy must be one of: min_selected_packet, max_selected_packet, selected, packet")
+        raise ValueError(
+            "base_policy must be one of: min_selected_packet, max_selected_packet, selected, packet"
+        )
     return min(values)
 
 
@@ -197,10 +227,16 @@ def _required_reward_multiplier(
     return (cfg.target_monthly_usdc + monthly_loss) / denom
 
 
-def _recovery_days(loss: float, monthly_income: float, cfg: SustainabilityStressConfig) -> float:
+def _recovery_days(
+    loss: float, monthly_income: float, cfg: SustainabilityStressConfig
+) -> float:
     if loss <= 0:
         return 0.0
-    if monthly_income <= 0 or cfg.days_per_month <= 0 or not math.isfinite(monthly_income):
+    if (
+        monthly_income <= 0
+        or cfg.days_per_month <= 0
+        or not math.isfinite(monthly_income)
+    ):
         return math.inf
     return loss / (monthly_income / cfg.days_per_month)
 

@@ -28,17 +28,23 @@ class DrawdownGuardConfig:
     min_reward_to_trading_loss_ratio: float = 3.0
 
 
-def lp_config_from_manifest(manifest: dict[str, Any], base: LPConfig | None = None) -> LPConfig:
+def lp_config_from_manifest(
+    manifest: dict[str, Any], base: LPConfig | None = None
+) -> LPConfig:
     """Build an LPConfig from a parameterized public-paper manifest."""
 
     cfg = base or LPConfig()
-    lp_cfg = manifest.get("lp_config") if isinstance(manifest.get("lp_config"), dict) else {}
+    lp_cfg = (
+        manifest.get("lp_config") if isinstance(manifest.get("lp_config"), dict) else {}
+    )
     merged = {**lp_cfg, **manifest}
     text = " ".join(
         str(merged.get(key, ""))
         for key in ["_candidate_name", "strategy", "config", "replaced"]
     ).lower()
-    quote_size = _num(merged.get("quote_size", merged.get("quote_size_shares")), math.nan)
+    quote_size = _num(
+        merged.get("quote_size", merged.get("quote_size_shares")), math.nan
+    )
     residual_cap = _num(merged.get("partial_rescue_max_residual_loss_usdc"), math.nan)
     density = _num(merged.get("min_reward_density_per_day"), math.nan)
     quote_offset = _num(merged.get("quote_offset"), math.nan)
@@ -49,26 +55,67 @@ def lp_config_from_manifest(manifest: dict[str, Any], base: LPConfig | None = No
     max_unpaired_minutes = _num(merged.get("max_unpaired_minutes"), math.nan)
     values = {
         "initial_capital": _num(merged.get("initial_capital"), cfg.initial_capital),
-        "quote_size_shares": quote_size if math.isfinite(quote_size) else _infer_text_number(text, r"(?:^|[^a-z0-9])q(\d+(?:\.\d+)?)", cfg.quote_size_shares),
-        "quote_offset": quote_offset if math.isfinite(quote_offset) else _infer_text_number(text, r"(?:^|[^a-z0-9])offset(\d+(?:\.\d+)?)", cfg.quote_offset),
+        "quote_size_shares": quote_size
+        if math.isfinite(quote_size)
+        else _infer_text_number(
+            text, r"(?:^|[^a-z0-9])q(\d+(?:\.\d+)?)", cfg.quote_size_shares
+        ),
+        "quote_offset": quote_offset
+        if math.isfinite(quote_offset)
+        else _infer_text_number(
+            text, r"(?:^|[^a-z0-9])offset(\d+(?:\.\d+)?)", cfg.quote_offset
+        ),
         "safety_margin": _num(merged.get("safety_margin"), cfg.safety_margin),
-        "max_unpaired_per_market": max_unpaired_per_market if math.isfinite(max_unpaired_per_market) else cfg.max_unpaired_per_market,
-        "max_total_unpaired": max_total_unpaired if math.isfinite(max_total_unpaired) else cfg.max_total_unpaired,
-        "max_cluster_unpaired": max_cluster_unpaired if math.isfinite(max_cluster_unpaired) else cfg.max_cluster_unpaired,
-        "max_unpaired_minutes": max_unpaired_minutes if math.isfinite(max_unpaired_minutes) else cfg.max_unpaired_minutes,
-        "active_capital_limit": active_capital_limit if math.isfinite(active_capital_limit) else _infer_text_number(text, r"(?:^|[^a-z0-9])active[_-]?cap(\d+(?:\.\d+)?)", cfg.active_capital_limit),
-        "excluded_categories": str(merged.get("excluded_categories", cfg.excluded_categories)),
-        "min_reward_density_per_day": density if math.isfinite(density) else _infer_density(text, cfg.min_reward_density_per_day),
+        "max_unpaired_per_market": max_unpaired_per_market
+        if math.isfinite(max_unpaired_per_market)
+        else cfg.max_unpaired_per_market,
+        "max_total_unpaired": max_total_unpaired
+        if math.isfinite(max_total_unpaired)
+        else cfg.max_total_unpaired,
+        "max_cluster_unpaired": max_cluster_unpaired
+        if math.isfinite(max_cluster_unpaired)
+        else cfg.max_cluster_unpaired,
+        "max_unpaired_minutes": max_unpaired_minutes
+        if math.isfinite(max_unpaired_minutes)
+        else cfg.max_unpaired_minutes,
+        "active_capital_limit": active_capital_limit
+        if math.isfinite(active_capital_limit)
+        else _infer_text_number(
+            text,
+            r"(?:^|[^a-z0-9])active[_-]?cap(\d+(?:\.\d+)?)",
+            cfg.active_capital_limit,
+        ),
+        "excluded_categories": str(
+            merged.get("excluded_categories", cfg.excluded_categories)
+        ),
+        "min_reward_density_per_day": density
+        if math.isfinite(density)
+        else _infer_density(text, cfg.min_reward_density_per_day),
         "max_recent_vol": _num(merged.get("max_recent_vol"), cfg.max_recent_vol),
         "max_recent_jump": _num(merged.get("max_recent_jump"), cfg.max_recent_jump),
-        "vol_quote_multiplier": _num(merged.get("vol_quote_multiplier"), cfg.vol_quote_multiplier),
-        "depth_cap_quote_size": bool(merged.get("depth_cap_quote_size", cfg.depth_cap_quote_size)),
-        "depth_quote_size_fraction": _num(merged.get("depth_quote_size_fraction"), cfg.depth_quote_size_fraction),
+        "vol_quote_multiplier": _num(
+            merged.get("vol_quote_multiplier"), cfg.vol_quote_multiplier
+        ),
+        "depth_cap_quote_size": bool(
+            merged.get("depth_cap_quote_size", cfg.depth_cap_quote_size)
+        ),
+        "depth_quote_size_fraction": _num(
+            merged.get("depth_quote_size_fraction"), cfg.depth_quote_size_fraction
+        ),
         "min_depth_capped_quote_size_shares": _num(
-            merged.get("min_depth_capped_quote_size_shares", merged.get("min_depth_capped_quote_size")),
+            merged.get(
+                "min_depth_capped_quote_size_shares",
+                merged.get("min_depth_capped_quote_size"),
+            ),
             cfg.min_depth_capped_quote_size_shares,
         ),
-        "partial_rescue_max_residual_loss_usdc": residual_cap if math.isfinite(residual_cap) else _infer_text_number(text, r"(?:^|[^a-z0-9])cap(\d+(?:\.\d+)?)", cfg.partial_rescue_max_residual_loss_usdc),
+        "partial_rescue_max_residual_loss_usdc": residual_cap
+        if math.isfinite(residual_cap)
+        else _infer_text_number(
+            text,
+            r"(?:^|[^a-z0-9])cap(\d+(?:\.\d+)?)",
+            cfg.partial_rescue_max_residual_loss_usdc,
+        ),
     }
     return LPConfig(**{**asdict(cfg), **values})
 
@@ -110,8 +157,12 @@ def evaluate_drawdown_guard(
     duration_hours = _duration_hours(equity)
     mtm_dd_fraction = abs(_num(summary.get("max_drawdown_mtm_pct"), 0.0))
     realized_dd_fraction = abs(_num(summary.get("max_drawdown_realized_pct"), 0.0))
-    max_open_inventory_fraction = _num(summary.get("max_open_inventory_notional"), 0.0) / cfg.initial_capital
-    max_active_order_fraction = _num(summary.get("max_active_order_notional"), 0.0) / cfg.initial_capital
+    max_open_inventory_fraction = (
+        _num(summary.get("max_open_inventory_notional"), 0.0) / cfg.initial_capital
+    )
+    max_active_order_fraction = (
+        _num(summary.get("max_active_order_notional"), 0.0) / cfg.initial_capital
+    )
     reward_to_loss = _num(summary.get("reward_to_trading_loss_ratio"), math.inf)
     metrics = {
         "duration_hours": duration_hours,
@@ -126,17 +177,25 @@ def evaluate_drawdown_guard(
         "max_active_order_notional": _num(summary.get("max_active_order_notional")),
         "max_active_order_fraction": max_active_order_fraction,
         "reward_to_trading_loss_ratio": reward_to_loss,
-        "profit_factor_trading_only": _num(summary.get("profit_factor_trading_only"), math.inf),
-        "pair_completion_ratio_shares": _num(summary.get("pair_completion_ratio_shares")),
+        "profit_factor_trading_only": _num(
+            summary.get("profit_factor_trading_only"), math.inf
+        ),
+        "pair_completion_ratio_shares": _num(
+            summary.get("pair_completion_ratio_shares")
+        ),
         "recovery_factor": _num(summary.get("recovery_factor"), math.inf),
     }
     gates = {
         "sample_hours_gate_passed": duration_hours >= cfg.min_observation_hours,
         "mtm_drawdown_gate_passed": mtm_dd_fraction <= cfg.max_mtm_drawdown_fraction,
-        "realized_drawdown_gate_passed": realized_dd_fraction <= cfg.max_realized_drawdown_fraction,
-        "open_inventory_gate_passed": max_open_inventory_fraction <= cfg.max_open_inventory_fraction,
-        "active_order_gate_passed": max_active_order_fraction <= cfg.max_active_order_fraction,
-        "reward_loss_gate_passed": reward_to_loss >= cfg.min_reward_to_trading_loss_ratio,
+        "realized_drawdown_gate_passed": realized_dd_fraction
+        <= cfg.max_realized_drawdown_fraction,
+        "open_inventory_gate_passed": max_open_inventory_fraction
+        <= cfg.max_open_inventory_fraction,
+        "active_order_gate_passed": max_active_order_fraction
+        <= cfg.max_active_order_fraction,
+        "reward_loss_gate_passed": reward_to_loss
+        >= cfg.min_reward_to_trading_loss_ratio,
     }
     risk_core = all(v for k, v in gates.items() if k != "sample_hours_gate_passed")
     gates["drawdown_guard_passed"] = risk_core and gates["sample_hours_gate_passed"]
@@ -205,7 +264,9 @@ def _infer_text_number(text: str, pattern: str, default: float) -> float:
 
 
 def _infer_density(text: str, default: float) -> float:
-    explicit = _infer_text_number(text, r"(?:^|[^a-z0-9])density(\d+(?:\.\d+)?)", math.nan)
+    explicit = _infer_text_number(
+        text, r"(?:^|[^a-z0-9])density(\d+(?:\.\d+)?)", math.nan
+    )
     if math.isfinite(explicit):
         return explicit
     short = re.search(r"(?:^|[^a-z0-9])d(\d{3})(?:$|[^a-z0-9])", text)

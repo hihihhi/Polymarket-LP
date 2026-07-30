@@ -4,6 +4,7 @@
 This script reads local CSV exports only. It never signs, submits, cancels, or
 inspects private keys.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -15,12 +16,20 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from polymarket_lp.telemetry import ExecutionTelemetryConfig, audit_execution_telemetry, load_csv_if
+from polymarket_lp.telemetry import (
+    ExecutionTelemetryConfig,
+    audit_execution_telemetry,
+    load_csv_if,
+)
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--orders", required=True, help="CSV with client_order_id/order_id and order timestamps")
+    p.add_argument(
+        "--orders",
+        required=True,
+        help="CSV with client_order_id/order_id and order timestamps",
+    )
     p.add_argument("--fills", default="", help="Optional fill CSV")
     p.add_argument("--cancels", default="", help="Optional cancel CSV")
     p.add_argument("--rewards", default="", help="Optional paid reward CSV")

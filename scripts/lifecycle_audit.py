@@ -4,6 +4,7 @@
 This script reads local CSV exports only. It never signs, submits, cancels, or
 inspects private keys.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -15,12 +16,20 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from polymarket_lp.lifecycle import LifecycleAuditConfig, audit_order_lifecycle, load_lifecycle_csv
+from polymarket_lp.lifecycle import (
+    LifecycleAuditConfig,
+    audit_order_lifecycle,
+    load_lifecycle_csv,
+)
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--events", required=True, help="CSV with timestamp, client_order_id/order_id, lifecycle_state")
+    p.add_argument(
+        "--events",
+        required=True,
+        help="CSV with timestamp, client_order_id/order_id, lifecycle_state",
+    )
     p.add_argument("--out", default="", help="Optional JSON output path")
     p.add_argument("--min-completed-orders", type=int, default=1)
     p.add_argument("--max-sign-to-submit-seconds", type=float, default=10.0)

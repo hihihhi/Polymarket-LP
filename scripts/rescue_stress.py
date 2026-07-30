@@ -4,6 +4,7 @@
 Read-only: this script consumes quote CSVs and writes JSON/Markdown stress
 artifacts. It never signs, submits, cancels, or inspects live orders.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -19,7 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from polymarket_lp.rescue_stress import RescueStressConfig, evaluate_rescue_stress  # noqa: E402
+from polymarket_lp.rescue_stress import (  # noqa: E402
+    RescueStressConfig,
+    evaluate_rescue_stress,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,7 +44,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-taker-rescue-depth-fraction", type=float, default=1.0)
     p.add_argument("--min-taker-rescue-feasible-rate", type=float, default=0.80)
     p.add_argument("--require-taker-residual-loss", action="store_true")
-    p.add_argument("--max-latest-taker-residual-loss-fraction", type=float, default=0.05)
+    p.add_argument(
+        "--max-latest-taker-residual-loss-fraction", type=float, default=0.05
+    )
     return p.parse_args()
 
 
@@ -67,13 +73,20 @@ def main() -> None:
     if args.out:
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(_json_safe(result), indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        out.write_text(
+            json.dumps(_json_safe(result), indent=2, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
     markdown = _markdown(result)
     if args.markdown_out:
         md = Path(args.markdown_out)
         md.parent.mkdir(parents=True, exist_ok=True)
         md.write_text(markdown, encoding="utf-8")
-    print(json.dumps({"status": result["status"], "blockers": result["blockers"]}, indent=2))
+    print(
+        json.dumps(
+            {"status": result["status"], "blockers": result["blockers"]}, indent=2
+        )
+    )
 
 
 def _markdown(result: dict[str, Any]) -> str:

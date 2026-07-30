@@ -12,7 +12,6 @@ import pandas as pd
 
 from .lifecycle import CANONICAL_LIFECYCLE_STATES
 
-
 SCHEMA_VERSION = "lp_lifecycle_ledger_v1"
 REQUIRED_EVENT_FIELDS = ("timestamp", "client_order_id", "lifecycle_state")
 FORBIDDEN_KEY_FRAGMENTS = (
@@ -44,36 +43,101 @@ class LifecycleLedgerConfig:
 def lifecycle_event_schema() -> list[dict[str, str]]:
     rows = [
         ("timestamp", "yes", "all", "UTC timestamp for the lifecycle event."),
-        ("client_order_id", "yes", "all", "Client order id or redacted order id reference."),
-        ("lifecycle_state", "yes", "all", "Canonical state from CANONICAL_LIFECYCLE_STATES."),
+        (
+            "client_order_id",
+            "yes",
+            "all",
+            "Client order id or redacted order id reference.",
+        ),
+        (
+            "lifecycle_state",
+            "yes",
+            "all",
+            "Canonical state from CANONICAL_LIFECYCLE_STATES.",
+        ),
         ("market_id", "yes", "book_snapshot..final", "Market identifier."),
         ("condition_id", "yes", "book_snapshot..final", "Condition identifier."),
         ("side", "yes", "quote/fill/rescue", "YES/NO or buy/sell direction."),
-        ("book_state_before", "yes", "book_snapshot", "Redacted serialized book/depth snapshot."),
+        (
+            "book_state_before",
+            "yes",
+            "book_snapshot",
+            "Redacted serialized book/depth snapshot.",
+        ),
         ("rank_score", "yes", "ranking_decision", "Candidate/ranking score."),
         ("quote_price", "yes", "quote_intent", "Limit quote price."),
         ("quote_size", "yes", "quote_intent", "Quote size/shares."),
         ("post_only", "yes", "quote_intent", "Post-only/maker intent."),
-        ("risk_gate_status", "yes", "risk_gate", "Capital, concentration, stale-data and kill-switch state."),
-        ("signed_order_hash", "yes", "sign", "Safe hash/reference to signed order, not private key material."),
+        (
+            "risk_gate_status",
+            "yes",
+            "risk_gate",
+            "Capital, concentration, stale-data and kill-switch state.",
+        ),
+        (
+            "signed_order_hash",
+            "yes",
+            "sign",
+            "Safe hash/reference to signed order, not private key material.",
+        ),
         ("submit_ts", "yes", "submit", "Order submission timestamp."),
         ("ack_reject_ts", "yes", "ack/reject", "Exchange ack/reject timestamp."),
         ("reject_reason", "conditional", "reject", "Reject reason if rejected."),
-        ("queue_depth_ahead", "yes", "queue_estimate", "Estimated displayed queue/depth ahead."),
+        (
+            "queue_depth_ahead",
+            "yes",
+            "queue_estimate",
+            "Estimated displayed queue/depth ahead.",
+        ),
         ("resting_seconds", "yes", "resting", "Resting eligible seconds."),
         ("fill_status", "yes", "no_fill/partial_fill/full_fill", "Fill state."),
         ("fill_price", "conditional", "partial_fill/full_fill", "Fill price."),
         ("fill_size", "conditional", "partial_fill/full_fill", "Fill size."),
         ("cancel_request_ts", "yes", "cancel_request", "Cancel request timestamp."),
-        ("cancel_confirm_ts", "yes", "cancel_confirm", "Cancel confirmation timestamp."),
-        ("inventory_state", "conditional", "inventory_update", "Inventory after fills/rescue."),
-        ("rescue_action", "conditional", "maker_rescue/taker_rescue/forced_cut", "Autonomous rescue/cut action."),
+        (
+            "cancel_confirm_ts",
+            "yes",
+            "cancel_confirm",
+            "Cancel confirmation timestamp.",
+        ),
+        (
+            "inventory_state",
+            "conditional",
+            "inventory_update",
+            "Inventory after fills/rescue.",
+        ),
+        (
+            "rescue_action",
+            "conditional",
+            "maker_rescue/taker_rescue/forced_cut",
+            "Autonomous rescue/cut action.",
+        ),
         ("slippage_usdc", "yes", "fee_slippage", "Slippage cost."),
         ("fees_usdc", "yes", "fee_slippage", "Fees paid."),
-        ("estimated_reward_usdc", "yes", "reward_estimate", "Estimated reward linked to eligible resting."),
-        ("paid_reward_usdc", "yes", "reward_paid", "Actual paid reward from reward ledger."),
-        ("final_pnl_usdc", "yes", "final_pnl_attribution", "Final realized/MTM PnL attribution."),
-        ("evidence_source", "yes", "all", "signed-paper runner, exchange export, or reward ledger."),
+        (
+            "estimated_reward_usdc",
+            "yes",
+            "reward_estimate",
+            "Estimated reward linked to eligible resting.",
+        ),
+        (
+            "paid_reward_usdc",
+            "yes",
+            "reward_paid",
+            "Actual paid reward from reward ledger.",
+        ),
+        (
+            "final_pnl_usdc",
+            "yes",
+            "final_pnl_attribution",
+            "Final realized/MTM PnL attribution.",
+        ),
+        (
+            "evidence_source",
+            "yes",
+            "all",
+            "signed-paper runner, exchange export, or reward ledger.",
+        ),
     ]
     return [
         {"column": c, "required": req, "state_scope": scope, "description": desc}
@@ -97,7 +161,12 @@ def append_lifecycle_event(
     record["schema_version"] = SCHEMA_VERSION
     record["event_hash"] = _record_hash(record)
     with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, sort_keys=True, separators=(",", ":"), default=_json_default) + "\n")
+        f.write(
+            json.dumps(
+                record, sort_keys=True, separators=(",", ":"), default=_json_default
+            )
+            + "\n"
+        )
     return record
 
 
@@ -154,8 +223,12 @@ def verify_lifecycle_ledger(
         "config": asdict(cfg),
         "metrics": {
             "event_rows": int(len(rows)),
-            "orders": int(df["client_order_id"].nunique()) if "client_order_id" in df else 0,
-            "states": int(df["lifecycle_state"].nunique()) if "lifecycle_state" in df else 0,
+            "orders": int(df["client_order_id"].nunique())
+            if "client_order_id" in df
+            else 0,
+            "states": int(df["lifecycle_state"].nunique())
+            if "lifecycle_state" in df
+            else 0,
         },
         "gates": gates,
         "errors": {
@@ -164,17 +237,25 @@ def verify_lifecycle_ledger(
             "hash_errors": hash_errors[:20],
             "timestamp_errors": timestamp_errors[:20],
         },
-        "status": "lifecycle_ledger_integrity_passed" if gates["ledger_integrity_passed"] else "lifecycle_ledger_incomplete",
+        "status": "lifecycle_ledger_integrity_passed"
+        if gates["ledger_integrity_passed"]
+        else "lifecycle_ledger_incomplete",
         "safety": "local append-only proof ledger; no private keys, signing, order submission, or cancellation",
     }
 
 
-def _normalise_event(event: dict[str, Any], cfg: LifecycleLedgerConfig) -> dict[str, Any]:
+def _normalise_event(
+    event: dict[str, Any], cfg: LifecycleLedgerConfig
+) -> dict[str, Any]:
     if not isinstance(event, dict):
         raise TypeError("event must be a dict")
     if cfg.reject_secret_like_keys:
         _reject_secret_like_keys(event)
-    missing = [field for field in REQUIRED_EVENT_FIELDS if field not in event or event[field] in (None, "")]
+    missing = [
+        field
+        for field in REQUIRED_EVENT_FIELDS
+        if field not in event or event[field] in (None, "")
+    ]
     if missing:
         raise ValueError(f"missing required lifecycle event fields: {missing}")
     state = str(event["lifecycle_state"]).strip().lower()
@@ -197,7 +278,9 @@ def _reject_secret_like_keys(value: Any, prefix: str = "") -> None:
         for key, child in value.items():
             lower = str(key).lower()
             if any(fragment in lower for fragment in FORBIDDEN_KEY_FRAGMENTS):
-                raise ValueError(f"secret-like key is not allowed in lifecycle ledger: {prefix}{key}")
+                raise ValueError(
+                    f"secret-like key is not allowed in lifecycle ledger: {prefix}{key}"
+                )
             _reject_secret_like_keys(child, f"{prefix}{key}.")
     elif isinstance(value, list):
         for i, child in enumerate(value):
@@ -217,7 +300,9 @@ def _last_record(path: Path) -> dict[str, Any]:
 
 def _record_hash(record: dict[str, Any]) -> str:
     payload = {k: v for k, v in record.items() if k != "event_hash"}
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=_json_default)
+    raw = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), default=_json_default
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -239,7 +324,9 @@ def _hash_chain_errors(rows: Iterable[dict[str, Any]]) -> list[str]:
     return errors
 
 
-def _schema_errors(rows: Iterable[dict[str, Any]], cfg: LifecycleLedgerConfig) -> list[str]:
+def _schema_errors(
+    rows: Iterable[dict[str, Any]], cfg: LifecycleLedgerConfig
+) -> list[str]:
     errors: list[str] = []
     for idx, row in enumerate(rows):
         for field in REQUIRED_EVENT_FIELDS:
@@ -260,12 +347,17 @@ def _timestamp_errors(df: pd.DataFrame, cfg: LifecycleLedgerConfig) -> list[str]
     if df.empty or "timestamp" not in df:
         return []
     ts = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
-    errors = [f"row {i}: invalid timestamp" for i, ok in enumerate(ts.notna()) if not ok]
+    errors = [
+        f"row {i}: invalid timestamp" for i, ok in enumerate(ts.notna()) if not ok
+    ]
     if cfg.max_timestamp_lag_seconds is not None:
         now = pd.Timestamp.now(tz="UTC")
         lag = (now - ts).dt.total_seconds()
         bad = lag > cfg.max_timestamp_lag_seconds
-        errors.extend(f"row {i}: timestamp lag {lag.iloc[i]:.1f}s exceeds {cfg.max_timestamp_lag_seconds}s" for i in list(bad[bad].index)[:20])
+        errors.extend(
+            f"row {i}: timestamp lag {lag.iloc[i]:.1f}s exceeds {cfg.max_timestamp_lag_seconds}s"
+            for i in list(bad[bad].index)[:20]
+        )
     return errors
 
 

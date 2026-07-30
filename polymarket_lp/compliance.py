@@ -6,7 +6,6 @@ import urllib.request
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-
 DEFAULT_GEOBLOCK_URL = "https://polymarket.com/api/geoblock"
 DEFAULT_DOCS_URL = "https://docs.polymarket.com/api-reference/geoblock"
 DEFAULT_NEW_ORDER_RESTRICTED_COUNTRY_CODES = ("US", "TW", "UM")
@@ -34,12 +33,17 @@ class ComplianceAvailabilityConfig:
     block_on_endpoint_error: bool = True
 
 
-def fetch_geoblock_status(endpoint_url: str = DEFAULT_GEOBLOCK_URL, timeout_seconds: float = 10.0) -> dict[str, Any]:
+def fetch_geoblock_status(
+    endpoint_url: str = DEFAULT_GEOBLOCK_URL, timeout_seconds: float = 10.0
+) -> dict[str, Any]:
     """Fetch the public geoblock endpoint and redact direct IP evidence."""
 
     req = urllib.request.Request(
         endpoint_url,
-        headers={"Accept": "application/json", "User-Agent": "polymarket-lp-compliance-gate/0.1"},
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "polymarket-lp-compliance-gate/0.1",
+        },
     )
     with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
         payload = json.loads(resp.read().decode("utf-8"))
@@ -63,7 +67,11 @@ def evaluate_compliance_availability(
 
     cfg = cfg or ComplianceAvailabilityConfig()
     payload = _redact_payload(geoblock_payload or {})
-    restricted = {_norm_country(code) for code in cfg.new_order_restricted_country_codes if _norm_country(code)}
+    restricted = {
+        _norm_country(code)
+        for code in cfg.new_order_restricted_country_codes
+        if _norm_country(code)
+    }
     endpoint_country = _norm_country(payload.get("country"))
     session_country = _norm_country(cfg.session_country_code)
     endpoint_blocked = _as_bool(payload.get("blocked"))
@@ -74,7 +82,9 @@ def evaluate_compliance_availability(
     if endpoint_error_present and not cfg.block_on_endpoint_error:
         endpoint_clear = True
 
-    endpoint_country_restricted = bool(endpoint_country and endpoint_country in restricted)
+    endpoint_country_restricted = bool(
+        endpoint_country and endpoint_country in restricted
+    )
     session_country_restricted = bool(session_country and session_country in restricted)
 
     gates = {
@@ -88,7 +98,11 @@ def evaluate_compliance_availability(
     }
     gates["new_order_placement_allowed"] = bool(all(gates.values()))
 
-    hard_block = endpoint_blocked is True or endpoint_country_restricted or session_country_restricted
+    hard_block = (
+        endpoint_blocked is True
+        or endpoint_country_restricted
+        or session_country_restricted
+    )
     status = (
         "new_order_placement_allowed"
         if gates["new_order_placement_allowed"]
@@ -118,7 +132,9 @@ def evaluate_compliance_availability(
         "gates": gates,
         "blockers": _blockers(gates, endpoint_blocked, endpoint_error_present, cfg),
         "status": status,
-        "decision": "block_new_order_placement" if not gates["new_order_placement_allowed"] else "allow_only_after_recorded_clearance",
+        "decision": "block_new_order_placement"
+        if not gates["new_order_placement_allowed"]
+        else "allow_only_after_recorded_clearance",
         "safety": "read-only compliance availability gate; no login, no private keys, no signing, no order placement; not legal advice",
     }
 
@@ -147,7 +163,9 @@ def _blockers(
         if not gates.get(gate, False) and message not in reasons:
             reasons.append(message)
     if not cfg.block_on_endpoint_error and endpoint_error_present:
-        reasons.append("endpoint error was configured non-blocking; requires manual review")
+        reasons.append(
+            "endpoint error was configured non-blocking; requires manual review"
+        )
     return reasons
 
 

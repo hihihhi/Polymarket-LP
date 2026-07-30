@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run Polymarket LP portfolio backtests."""
+
 from __future__ import annotations
 
 import argparse
@@ -10,13 +11,22 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from polymarket_lp.lp_backtest import LPConfig, load_snapshots, make_synthetic_snapshots, run_backtest_to_files
+from polymarket_lp.lp_backtest import (
+    LPConfig,
+    load_snapshots,
+    make_synthetic_snapshots,
+    run_backtest_to_files,
+)
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--snapshots", help="CSV of point-in-time market snapshots/orderbook mids")
-    p.add_argument("--synthetic", action="store_true", help="Run L0 synthetic sanity-check data")
+    p.add_argument(
+        "--snapshots", help="CSV of point-in-time market snapshots/orderbook mids"
+    )
+    p.add_argument(
+        "--synthetic", action="store_true", help="Run L0 synthetic sanity-check data"
+    )
     p.add_argument("--out-dir", default="lp_backtest_out")
     p.add_argument("--initial-capital", type=float, default=2000)
     p.add_argument("--quote-size", type=float, default=25)
@@ -77,7 +87,9 @@ def main() -> None:
         vol_quote_multiplier=args.vol_quote_multiplier,
     )
     if args.synthetic:
-        snapshots = make_synthetic_snapshots(seed=args.seed, days=args.synthetic_days, n_markets=args.synthetic_markets)
+        snapshots = make_synthetic_snapshots(
+            seed=args.seed, days=args.synthetic_days, n_markets=args.synthetic_markets
+        )
     elif args.snapshots:
         snapshots = load_snapshots(args.snapshots)
     else:
@@ -85,7 +97,9 @@ def main() -> None:
 
     summary = run_backtest_to_files(snapshots, cfg, Path(args.out_dir))
     print(summary.T.to_string(header=False))
-    print(f"\nWrote: {Path(args.out_dir) / 'lp_summary.csv'}, {Path(args.out_dir) / 'lp_equity_curve.csv'}, {Path(args.out_dir) / 'lp_events.csv'}")
+    print(
+        f"\nWrote: {Path(args.out_dir) / 'lp_summary.csv'}, {Path(args.out_dir) / 'lp_equity_curve.csv'}, {Path(args.out_dir) / 'lp_events.csv'}"
+    )
 
 
 if __name__ == "__main__":

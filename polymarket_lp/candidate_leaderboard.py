@@ -14,7 +14,9 @@ class CandidateEvidence:
     capital_risk: dict[str, Any] | None = None
 
 
-def build_candidate_leaderboard(candidates: Iterable[CandidateEvidence]) -> dict[str, Any]:
+def build_candidate_leaderboard(
+    candidates: Iterable[CandidateEvidence],
+) -> dict[str, Any]:
     """Rank public-paper LP candidates by proof gates, income, and rescue risk.
 
     This is a read-only evidence combiner. It does not infer fills, paid rewards,
@@ -51,9 +53,19 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
     capital_metrics = _dict(capital.get("metrics"))
     lp_config = _dict(drawdown.get("lp_config"))
     blockers = gate.get("blockers") if isinstance(gate.get("blockers"), list) else []
-    drawdown_blockers = drawdown.get("blockers") if isinstance(drawdown.get("blockers"), list) else []
-    capital_blockers = list(capital.get("blockers")) if isinstance(capital.get("blockers"), list) else []
-    capital_warnings = list(capital.get("warnings")) if isinstance(capital.get("warnings"), list) else []
+    drawdown_blockers = (
+        drawdown.get("blockers") if isinstance(drawdown.get("blockers"), list) else []
+    )
+    capital_blockers = (
+        list(capital.get("blockers"))
+        if isinstance(capital.get("blockers"), list)
+        else []
+    )
+    capital_warnings = (
+        list(capital.get("warnings"))
+        if isinstance(capital.get("warnings"), list)
+        else []
+    )
     metadata = _dict(candidate.metadata)
     freshness = _dict(metadata.get("_input_freshness"))
     has_drawdown_guard = bool(drawdown)
@@ -61,7 +73,9 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
     income_p05 = _float(metrics.get("income_p05_at_required_capture"), math.nan)
     target_monthly = _float(gate_config.get("target_monthly_usdc"), math.nan)
     required_capture = _float(metrics.get("required_capture_rate"), math.nan)
-    capital_configured_cap_loss = _float(capital_metrics.get("configured_inventory_cap_loss_to_zero"), math.nan)
+    capital_configured_cap_loss = _float(
+        capital_metrics.get("configured_inventory_cap_loss_to_zero"), math.nan
+    )
     capital_after_configured_cap_loss = income_p05 - capital_configured_cap_loss
     capture_needed_for_target = _capture_needed(
         target_monthly,
@@ -74,7 +88,9 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         required_capture,
     )
     target_income_buffer = _income_buffer(income_p05, target_monthly)
-    after_cap_loss_income_buffer = _income_buffer(capital_after_configured_cap_loss, target_monthly)
+    after_cap_loss_income_buffer = _income_buffer(
+        capital_after_configured_cap_loss, target_monthly
+    )
     after_cap_target_passed = (
         True
         if not has_capital_risk
@@ -82,8 +98,12 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         and math.isfinite(target_monthly)
         and capital_after_configured_cap_loss >= target_monthly
     )
-    after_cap_target_required = bool(capital_config.get("require_after_cap_target", True))
-    drawdown_core_passed = bool(drawdown.get("risk_core_passed", True)) if has_drawdown_guard else True
+    after_cap_target_required = bool(
+        capital_config.get("require_after_cap_target", True)
+    )
+    drawdown_core_passed = (
+        bool(drawdown.get("risk_core_passed", True)) if has_drawdown_guard else True
+    )
     capital_core_passed = (
         bool(capital.get("status") == "capital_risk_stress_passed")
         and (after_cap_target_passed or not after_cap_target_required)
@@ -91,14 +111,22 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         else True
     )
     if has_capital_risk and not after_cap_target_passed and after_cap_target_required:
-        capital_blockers.append("configured-cap loss leaves p05 monthly income below target")
+        capital_blockers.append(
+            "configured-cap loss leaves p05 monthly income below target"
+        )
     elif has_capital_risk and not after_cap_target_passed:
-        capital_warnings.append("configured-cap loss leaves p05 monthly income below target")
+        capital_warnings.append(
+            "configured-cap loss leaves p05 monthly income below target"
+        )
     drawdown_sample_passed = (
-        bool(drawdown_gates.get("sample_hours_gate_passed", False)) if has_drawdown_guard else True
+        bool(drawdown_gates.get("sample_hours_gate_passed", False))
+        if has_drawdown_guard
+        else True
     )
     drawdown_guard_passed = (
-        bool(drawdown_gates.get("drawdown_guard_passed", False)) if has_drawdown_guard else True
+        bool(drawdown_gates.get("drawdown_guard_passed", False))
+        if has_drawdown_guard
+        else True
     )
     risk_gates = [
         "clob_quality_gate_passed",
@@ -107,8 +135,14 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         "taker_depth_gate_passed",
         "taker_residual_loss_gate_passed",
     ]
-    sample_gates = ["sample_hours_gate_passed", "quote_rows_gate_passed", "book_scenario_gate_passed"]
-    sample_maturity_fraction, provisional_sample_hours_gate = _sample_maturity(metrics, gate_config)
+    sample_gates = [
+        "sample_hours_gate_passed",
+        "quote_rows_gate_passed",
+        "book_scenario_gate_passed",
+    ]
+    sample_maturity_fraction, provisional_sample_hours_gate = _sample_maturity(
+        metrics, gate_config
+    )
     row = {
         "name": candidate.name,
         "status": str(gate.get("status", "unknown")),
@@ -118,8 +152,12 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         "sample_gates_passed": all(bool(gates.get(k, False)) for k in sample_gates),
         "sample_hours_gate_passed": bool(gates.get("sample_hours_gate_passed", False)),
         "quote_rows_gate_passed": bool(gates.get("quote_rows_gate_passed", False)),
-        "book_scenario_gate_passed": bool(gates.get("book_scenario_gate_passed", False)),
-        "diversification_gate_passed": bool(gates.get("diversification_gate_passed", False)),
+        "book_scenario_gate_passed": bool(
+            gates.get("book_scenario_gate_passed", False)
+        ),
+        "diversification_gate_passed": bool(
+            gates.get("diversification_gate_passed", False)
+        ),
         "sample_maturity_fraction": sample_maturity_fraction,
         "provisional_sample_hours_gate_passed": provisional_sample_hours_gate,
         "has_drawdown_guard": has_drawdown_guard,
@@ -140,11 +178,21 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         "capture_needed_after_cap_loss": capture_needed_after_cap_loss,
         "target_income_buffer_at_required_capture": target_income_buffer,
         "after_cap_loss_income_buffer_at_required_capture": after_cap_loss_income_buffer,
-        "taker_rescue_feasible_rate": _float(metrics.get("taker_rescue_feasible_rate"), math.nan),
-        "taker_rescue_min_depth_fraction": _float(metrics.get("taker_rescue_min_depth_fraction"), math.nan),
-        "taker_size_weighted_rescue_fraction": _float(metrics.get("taker_size_weighted_rescue_fraction"), math.nan),
-        "latest_taker_residual_loss_to_zero": _float(metrics.get("latest_taker_residual_loss_to_zero"), math.nan),
-        "latest_taker_residual_loss_fraction": _float(metrics.get("latest_taker_residual_loss_fraction"), math.nan),
+        "taker_rescue_feasible_rate": _float(
+            metrics.get("taker_rescue_feasible_rate"), math.nan
+        ),
+        "taker_rescue_min_depth_fraction": _float(
+            metrics.get("taker_rescue_min_depth_fraction"), math.nan
+        ),
+        "taker_size_weighted_rescue_fraction": _float(
+            metrics.get("taker_size_weighted_rescue_fraction"), math.nan
+        ),
+        "latest_taker_residual_loss_to_zero": _float(
+            metrics.get("latest_taker_residual_loss_to_zero"), math.nan
+        ),
+        "latest_taker_residual_loss_fraction": _float(
+            metrics.get("latest_taker_residual_loss_fraction"), math.nan
+        ),
         "configured_quote_size_shares": _first_float(
             metadata.get("quote_size"),
             metadata.get("quote_size_shares"),
@@ -158,19 +206,45 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
             metadata.get("partial_rescue_max_residual_loss_usdc"),
             lp_config.get("partial_rescue_max_residual_loss_usdc"),
         ),
-        "configured_max_unpaired_per_market": _first_float(lp_config.get("max_unpaired_per_market")),
-        "configured_max_total_unpaired": _first_float(lp_config.get("max_total_unpaired")),
-        "configured_max_cluster_unpaired": _first_float(lp_config.get("max_cluster_unpaired")),
-        "drawdown_reward_to_trading_loss_ratio": _float(drawdown_metrics.get("reward_to_trading_loss_ratio"), math.nan),
-        "drawdown_mtm_fraction": _float(drawdown_metrics.get("max_drawdown_mtm_fraction"), math.nan),
-        "drawdown_realized_fraction": _float(drawdown_metrics.get("max_drawdown_realized_fraction"), math.nan),
-        "drawdown_max_open_inventory_notional": _float(drawdown_metrics.get("max_open_inventory_notional"), math.nan),
-        "drawdown_max_open_inventory_fraction": _float(drawdown_metrics.get("max_open_inventory_fraction"), math.nan),
-        "drawdown_max_active_order_notional": _float(drawdown_metrics.get("max_active_order_notional"), math.nan),
-        "drawdown_max_active_order_fraction": _float(drawdown_metrics.get("max_active_order_fraction"), math.nan),
-        "capital_cash_reserve_fraction": _float(capital_metrics.get("cash_reserve_fraction"), math.nan),
-        "capital_active_pair_notional": _float(capital_metrics.get("active_pair_notional"), math.nan),
-        "capital_latest_markets": int(_float(capital_metrics.get("latest_markets"), 0.0)),
+        "configured_max_unpaired_per_market": _first_float(
+            lp_config.get("max_unpaired_per_market")
+        ),
+        "configured_max_total_unpaired": _first_float(
+            lp_config.get("max_total_unpaired")
+        ),
+        "configured_max_cluster_unpaired": _first_float(
+            lp_config.get("max_cluster_unpaired")
+        ),
+        "drawdown_reward_to_trading_loss_ratio": _float(
+            drawdown_metrics.get("reward_to_trading_loss_ratio"), math.nan
+        ),
+        "drawdown_mtm_fraction": _float(
+            drawdown_metrics.get("max_drawdown_mtm_fraction"), math.nan
+        ),
+        "drawdown_realized_fraction": _float(
+            drawdown_metrics.get("max_drawdown_realized_fraction"), math.nan
+        ),
+        "drawdown_max_open_inventory_notional": _float(
+            drawdown_metrics.get("max_open_inventory_notional"), math.nan
+        ),
+        "drawdown_max_open_inventory_fraction": _float(
+            drawdown_metrics.get("max_open_inventory_fraction"), math.nan
+        ),
+        "drawdown_max_active_order_notional": _float(
+            drawdown_metrics.get("max_active_order_notional"), math.nan
+        ),
+        "drawdown_max_active_order_fraction": _float(
+            drawdown_metrics.get("max_active_order_fraction"), math.nan
+        ),
+        "capital_cash_reserve_fraction": _float(
+            capital_metrics.get("cash_reserve_fraction"), math.nan
+        ),
+        "capital_active_pair_notional": _float(
+            capital_metrics.get("active_pair_notional"), math.nan
+        ),
+        "capital_latest_markets": int(
+            _float(capital_metrics.get("latest_markets"), 0.0)
+        ),
         "capital_single_market_active_fraction": _float(
             capital_metrics.get("max_single_market_active_fraction"), math.nan
         ),
@@ -183,19 +257,35 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
         "capital_single_cluster_loss_fraction": _float(
             capital_metrics.get("single_cluster_worst_one_side_loss_fraction"), math.nan
         ),
-        "capital_unhedged_loss_fraction": _float(capital_metrics.get("unhedged_loss_fraction_of_capital"), math.nan),
-        "capital_unhedged_loss_usdc": _float(capital_metrics.get("all_active_unhedged_one_side_loss_to_zero"), math.nan),
+        "capital_unhedged_loss_fraction": _float(
+            capital_metrics.get("unhedged_loss_fraction_of_capital"), math.nan
+        ),
+        "capital_unhedged_loss_usdc": _float(
+            capital_metrics.get("all_active_unhedged_one_side_loss_to_zero"), math.nan
+        ),
         "capital_configured_cap_loss_usdc": capital_configured_cap_loss,
-        "capital_configured_cap_loss_fraction": _float(capital_metrics.get("configured_inventory_cap_loss_fraction"), math.nan),
-        "capital_configured_cap_recovery_days": _float(capital_metrics.get("capped_recovery_days_at_p05_income"), math.nan),
+        "capital_configured_cap_loss_fraction": _float(
+            capital_metrics.get("configured_inventory_cap_loss_fraction"), math.nan
+        ),
+        "capital_configured_cap_recovery_days": _float(
+            capital_metrics.get("capped_recovery_days_at_p05_income"), math.nan
+        ),
         "capital_after_configured_cap_loss_monthly": capital_after_configured_cap_loss,
         "capital_after_cap_loss_target_passed": after_cap_target_passed,
         "capital_after_cap_loss_target_required": after_cap_target_required,
-        "capital_pair_cost_per_share": _float(capital_metrics.get("max_pair_cost_per_share"), math.nan),
-        "input_snapshot_age_seconds": _float(_dict(freshness.get("snapshot")).get("age_seconds"), math.nan),
-        "input_quotes_age_seconds": _float(_dict(freshness.get("quotes")).get("age_seconds"), math.nan),
+        "capital_pair_cost_per_share": _float(
+            capital_metrics.get("max_pair_cost_per_share"), math.nan
+        ),
+        "input_snapshot_age_seconds": _float(
+            _dict(freshness.get("snapshot")).get("age_seconds"), math.nan
+        ),
+        "input_quotes_age_seconds": _float(
+            _dict(freshness.get("quotes")).get("age_seconds"), math.nan
+        ),
         "input_max_age_seconds": _float(freshness.get("max_age_seconds"), math.nan),
-        "input_freshness_gate_seconds": _float(metadata.get("_max_input_staleness_seconds"), math.nan),
+        "input_freshness_gate_seconds": _float(
+            metadata.get("_max_input_staleness_seconds"), math.nan
+        ),
         "blockers": [str(x) for x in blockers],
         "drawdown_blockers": [str(x) for x in drawdown_blockers],
         "capital_blockers": [str(x) for x in capital_blockers],
@@ -224,28 +314,56 @@ def _rank_key(row: dict[str, Any]) -> tuple[float, ...]:
     income = _finite(row.get("income_p05_at_required_capture"), -math.inf)
     rescue_rate = _finite(row.get("taker_rescue_feasible_rate"), -math.inf)
     rescue_fraction = _finite(row.get("taker_size_weighted_rescue_fraction"), -math.inf)
-    residual_fraction = _risk_bucket(row.get("latest_taker_residual_loss_fraction"), decimals=6, default=math.inf)
-    residual_loss = _risk_bucket(row.get("latest_taker_residual_loss_to_zero"), decimals=2, default=math.inf)
-    drawdown_mtm = _risk_bucket(row.get("drawdown_mtm_fraction"), decimals=6, default=math.inf)
-    open_inventory = _risk_bucket(row.get("drawdown_max_open_inventory_fraction"), decimals=6, default=math.inf)
-    active_orders = _risk_bucket(row.get("drawdown_max_active_order_fraction"), decimals=6, default=math.inf)
-    cap_loss = _risk_bucket(row.get("capital_configured_cap_loss_fraction"), decimals=6, default=math.inf)
-    cap_recovery = _risk_bucket(row.get("capital_configured_cap_recovery_days"), decimals=4, default=math.inf)
+    residual_fraction = _risk_bucket(
+        row.get("latest_taker_residual_loss_fraction"), decimals=6, default=math.inf
+    )
+    residual_loss = _risk_bucket(
+        row.get("latest_taker_residual_loss_to_zero"), decimals=2, default=math.inf
+    )
+    drawdown_mtm = _risk_bucket(
+        row.get("drawdown_mtm_fraction"), decimals=6, default=math.inf
+    )
+    open_inventory = _risk_bucket(
+        row.get("drawdown_max_open_inventory_fraction"), decimals=6, default=math.inf
+    )
+    active_orders = _risk_bucket(
+        row.get("drawdown_max_active_order_fraction"), decimals=6, default=math.inf
+    )
+    cap_loss = _risk_bucket(
+        row.get("capital_configured_cap_loss_fraction"), decimals=6, default=math.inf
+    )
+    cap_recovery = _risk_bucket(
+        row.get("capital_configured_cap_recovery_days"), decimals=4, default=math.inf
+    )
     single_market_active = _risk_bucket(
         row.get("capital_single_market_active_fraction"), decimals=6, default=math.inf
     )
     single_cluster_active = _risk_bucket(
         row.get("capital_single_cluster_active_fraction"), decimals=6, default=math.inf
     )
-    single_market_loss = _risk_bucket(row.get("capital_single_market_loss_fraction"), decimals=6, default=math.inf)
-    single_cluster_loss = _risk_bucket(row.get("capital_single_cluster_loss_fraction"), decimals=6, default=math.inf)
-    unhedged_loss = _risk_bucket(row.get("capital_unhedged_loss_fraction"), decimals=6, default=math.inf)
+    single_market_loss = _risk_bucket(
+        row.get("capital_single_market_loss_fraction"), decimals=6, default=math.inf
+    )
+    single_cluster_loss = _risk_bucket(
+        row.get("capital_single_cluster_loss_fraction"), decimals=6, default=math.inf
+    )
+    unhedged_loss = _risk_bucket(
+        row.get("capital_unhedged_loss_fraction"), decimals=6, default=math.inf
+    )
     cash_reserve = _finite(row.get("capital_cash_reserve_fraction"), -math.inf)
     reward_loss = _finite(row.get("drawdown_reward_to_trading_loss_ratio"), -math.inf)
-    after_cap_capture_needed = _risk_bucket(row.get("capture_needed_after_cap_loss"), decimals=6, default=math.inf)
-    after_cap_income_buffer = _finite(row.get("after_cap_loss_income_buffer_at_required_capture"), -math.inf)
-    target_capture_needed = _risk_bucket(row.get("capture_needed_for_target"), decimals=6, default=math.inf)
-    target_income_buffer = _finite(row.get("target_income_buffer_at_required_capture"), -math.inf)
+    after_cap_capture_needed = _risk_bucket(
+        row.get("capture_needed_after_cap_loss"), decimals=6, default=math.inf
+    )
+    after_cap_income_buffer = _finite(
+        row.get("after_cap_loss_income_buffer_at_required_capture"), -math.inf
+    )
+    target_capture_needed = _risk_bucket(
+        row.get("capture_needed_for_target"), decimals=6, default=math.inf
+    )
+    target_income_buffer = _finite(
+        row.get("target_income_buffer_at_required_capture"), -math.inf
+    )
     return (
         float(bool(row.get("public_paper_depth_ready"))),
         float(bool(row.get("income_gate_passed"))),
@@ -313,11 +431,19 @@ def _policy_leaders(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _income_rank_key(row: dict[str, Any]) -> tuple[float, ...]:
     income = _finite(row.get("income_p05_at_required_capture"), -math.inf)
-    residual_fraction = _risk_bucket(row.get("latest_taker_residual_loss_fraction"), decimals=6, default=math.inf)
-    residual_loss = _risk_bucket(row.get("latest_taker_residual_loss_to_zero"), decimals=2, default=math.inf)
+    residual_fraction = _risk_bucket(
+        row.get("latest_taker_residual_loss_fraction"), decimals=6, default=math.inf
+    )
+    residual_loss = _risk_bucket(
+        row.get("latest_taker_residual_loss_to_zero"), decimals=2, default=math.inf
+    )
     reward_loss = _finite(row.get("drawdown_reward_to_trading_loss_ratio"), -math.inf)
-    cap_loss = _risk_bucket(row.get("capital_configured_cap_loss_fraction"), decimals=6, default=math.inf)
-    cap_recovery = _risk_bucket(row.get("capital_configured_cap_recovery_days"), decimals=4, default=math.inf)
+    cap_loss = _risk_bucket(
+        row.get("capital_configured_cap_loss_fraction"), decimals=6, default=math.inf
+    )
+    cap_recovery = _risk_bucket(
+        row.get("capital_configured_cap_recovery_days"), decimals=4, default=math.inf
+    )
     return (
         float(bool(row.get("public_paper_depth_ready"))),
         float(bool(row.get("drawdown_core_passed", True))),
@@ -338,8 +464,12 @@ def _income_rank_key(row: dict[str, Any]) -> tuple[float, ...]:
 
 def _sample_rank_key(row: dict[str, Any]) -> tuple[float, ...]:
     income = _finite(row.get("income_p05_at_required_capture"), -math.inf)
-    residual_fraction = _risk_bucket(row.get("latest_taker_residual_loss_fraction"), decimals=6, default=math.inf)
-    cap_loss = _risk_bucket(row.get("capital_configured_cap_loss_fraction"), decimals=6, default=math.inf)
+    residual_fraction = _risk_bucket(
+        row.get("latest_taker_residual_loss_fraction"), decimals=6, default=math.inf
+    )
+    cap_loss = _risk_bucket(
+        row.get("capital_configured_cap_loss_fraction"), decimals=6, default=math.inf
+    )
     return (
         float(bool(row.get("public_paper_depth_ready"))),
         float(bool(row.get("drawdown_core_passed", True))),
@@ -368,34 +498,66 @@ def _leader_summary(row: dict[str, Any]) -> dict[str, Any]:
         "book_scenario_gate_passed": row.get("book_scenario_gate_passed"),
         "diversification_gate_passed": row.get("diversification_gate_passed"),
         "sample_maturity_fraction": row.get("sample_maturity_fraction"),
-        "provisional_sample_hours_gate_passed": row.get("provisional_sample_hours_gate_passed"),
-        "latest_taker_residual_loss_to_zero": row.get("latest_taker_residual_loss_to_zero"),
-        "latest_taker_residual_loss_fraction": row.get("latest_taker_residual_loss_fraction"),
+        "provisional_sample_hours_gate_passed": row.get(
+            "provisional_sample_hours_gate_passed"
+        ),
+        "latest_taker_residual_loss_to_zero": row.get(
+            "latest_taker_residual_loss_to_zero"
+        ),
+        "latest_taker_residual_loss_fraction": row.get(
+            "latest_taker_residual_loss_fraction"
+        ),
         "configured_quote_size_shares": row.get("configured_quote_size_shares"),
         "configured_active_capital_limit": row.get("configured_active_capital_limit"),
-        "configured_residual_loss_cap_usdc": row.get("configured_residual_loss_cap_usdc"),
+        "configured_residual_loss_cap_usdc": row.get(
+            "configured_residual_loss_cap_usdc"
+        ),
         "configured_max_total_unpaired": row.get("configured_max_total_unpaired"),
         "drawdown_guard_status": row.get("drawdown_guard_status"),
-        "drawdown_reward_to_trading_loss_ratio": row.get("drawdown_reward_to_trading_loss_ratio"),
+        "drawdown_reward_to_trading_loss_ratio": row.get(
+            "drawdown_reward_to_trading_loss_ratio"
+        ),
         "drawdown_mtm_fraction": row.get("drawdown_mtm_fraction"),
-        "drawdown_max_open_inventory_fraction": row.get("drawdown_max_open_inventory_fraction"),
-        "drawdown_max_active_order_fraction": row.get("drawdown_max_active_order_fraction"),
+        "drawdown_max_open_inventory_fraction": row.get(
+            "drawdown_max_open_inventory_fraction"
+        ),
+        "drawdown_max_active_order_fraction": row.get(
+            "drawdown_max_active_order_fraction"
+        ),
         "capital_risk_status": row.get("capital_risk_status"),
         "capital_cash_reserve_fraction": row.get("capital_cash_reserve_fraction"),
         "capital_latest_markets": row.get("capital_latest_markets"),
-        "capital_single_market_active_fraction": row.get("capital_single_market_active_fraction"),
-        "capital_single_cluster_active_fraction": row.get("capital_single_cluster_active_fraction"),
-        "capital_single_market_loss_fraction": row.get("capital_single_market_loss_fraction"),
-        "capital_single_cluster_loss_fraction": row.get("capital_single_cluster_loss_fraction"),
+        "capital_single_market_active_fraction": row.get(
+            "capital_single_market_active_fraction"
+        ),
+        "capital_single_cluster_active_fraction": row.get(
+            "capital_single_cluster_active_fraction"
+        ),
+        "capital_single_market_loss_fraction": row.get(
+            "capital_single_market_loss_fraction"
+        ),
+        "capital_single_cluster_loss_fraction": row.get(
+            "capital_single_cluster_loss_fraction"
+        ),
         "capital_unhedged_loss_fraction": row.get("capital_unhedged_loss_fraction"),
         "capital_configured_cap_loss_usdc": row.get("capital_configured_cap_loss_usdc"),
-        "capital_configured_cap_loss_fraction": row.get("capital_configured_cap_loss_fraction"),
-        "capital_configured_cap_recovery_days": row.get("capital_configured_cap_recovery_days"),
-        "capital_after_configured_cap_loss_monthly": row.get("capital_after_configured_cap_loss_monthly"),
-        "capital_after_cap_loss_target_passed": row.get("capital_after_cap_loss_target_passed"),
+        "capital_configured_cap_loss_fraction": row.get(
+            "capital_configured_cap_loss_fraction"
+        ),
+        "capital_configured_cap_recovery_days": row.get(
+            "capital_configured_cap_recovery_days"
+        ),
+        "capital_after_configured_cap_loss_monthly": row.get(
+            "capital_after_configured_cap_loss_monthly"
+        ),
+        "capital_after_cap_loss_target_passed": row.get(
+            "capital_after_cap_loss_target_passed"
+        ),
         "capture_needed_for_target": row.get("capture_needed_for_target"),
         "capture_needed_after_cap_loss": row.get("capture_needed_after_cap_loss"),
-        "target_income_buffer_at_required_capture": row.get("target_income_buffer_at_required_capture"),
+        "target_income_buffer_at_required_capture": row.get(
+            "target_income_buffer_at_required_capture"
+        ),
         "after_cap_loss_income_buffer_at_required_capture": row.get(
             "after_cap_loss_income_buffer_at_required_capture"
         ),
@@ -413,7 +575,9 @@ def _ranking_note(row: dict[str, Any]) -> str:
     if row.get("has_capital_risk") and not row.get("capital_core_passed"):
         return "income/rescue may pass, but capital-loss or recovery guard blocks promotion"
     if row.get("has_drawdown_guard") and not row.get("drawdown_core_passed"):
-        return "income/rescue may pass, but drawdown or reward-loss guard blocks promotion"
+        return (
+            "income/rescue may pass, but drawdown or reward-loss guard blocks promotion"
+        )
     if row.get("promotion_public_paper_passed"):
         return "public-paper income/rescue/drawdown/capital gates passed; still needs signed paper and paid-reward proof"
     if row.get("public_paper_depth_ready"):
@@ -453,7 +617,9 @@ def _status(leader: dict[str, Any]) -> str:
     return "no_public_paper_candidate_ready"
 
 
-def _autonomous_recovery(row: dict[str, Any], capital_config: dict[str, Any]) -> dict[str, Any]:
+def _autonomous_recovery(
+    row: dict[str, Any], capital_config: dict[str, Any]
+) -> dict[str, Any]:
     """Return mechanical action/scale for public-paper monitoring.
 
     This is deliberately conservative: it never authorizes live capital. It only
@@ -463,7 +629,11 @@ def _autonomous_recovery(row: dict[str, Any], capital_config: dict[str, Any]) ->
 
     configured_qsize = _finite(row.get("configured_quote_size_shares"), math.nan)
     scale, scale_reason = _recommended_scale(row, capital_config)
-    recommended_qsize = math.floor(configured_qsize * scale) if math.isfinite(configured_qsize) else math.nan
+    recommended_qsize = (
+        math.floor(configured_qsize * scale)
+        if math.isfinite(configured_qsize)
+        else math.nan
+    )
     if not math.isfinite(scale):
         scale = 0.0
     if row.get("quote_rows", 0) <= 0:
@@ -498,14 +668,22 @@ def _autonomous_recovery(row: dict[str, Any], capital_config: dict[str, Any]) ->
     }
 
 
-def _recommended_scale(row: dict[str, Any], capital_config: dict[str, Any]) -> tuple[float, str]:
+def _recommended_scale(
+    row: dict[str, Any], capital_config: dict[str, Any]
+) -> tuple[float, str]:
     initial_capital = _finite(capital_config.get("initial_capital"), 2_000.0)
     limits: list[tuple[str, float]] = []
     if initial_capital > 0:
         active_notional = _finite(row.get("capital_active_pair_notional"), math.nan)
         min_cash = _finite(capital_config.get("min_cash_reserve_fraction"), math.nan)
-        if math.isfinite(active_notional) and math.isfinite(min_cash) and active_notional > 0:
-            limits.append(("cash reserve", initial_capital * (1.0 - min_cash) / active_notional))
+        if (
+            math.isfinite(active_notional)
+            and math.isfinite(min_cash)
+            and active_notional > 0
+        ):
+            limits.append(
+                ("cash reserve", initial_capital * (1.0 - min_cash) / active_notional)
+            )
         _append_fraction_limit(
             limits,
             "unhedged loss",
@@ -543,10 +721,18 @@ def _recommended_scale(row: dict[str, Any], capital_config: dict[str, Any]) -> t
             capital_config.get("max_single_cluster_unhedged_loss_fraction"),
         )
     recovery_days = _finite(row.get("capital_configured_cap_recovery_days"), math.nan)
-    max_recovery_days = _finite(capital_config.get("max_capped_recovery_days"), math.nan)
-    if math.isfinite(recovery_days) and math.isfinite(max_recovery_days) and recovery_days > 0:
+    max_recovery_days = _finite(
+        capital_config.get("max_capped_recovery_days"), math.nan
+    )
+    if (
+        math.isfinite(recovery_days)
+        and math.isfinite(max_recovery_days)
+        and recovery_days > 0
+    ):
         limits.append(("recovery days", max_recovery_days / recovery_days))
-    finite_limits = [(name, value) for name, value in limits if math.isfinite(value) and value >= 0]
+    finite_limits = [
+        (name, value) for name, value in limits if math.isfinite(value) and value >= 0
+    ]
     if not finite_limits:
         return 1.0, "no finite scaling constraint"
     name, value = min(finite_limits, key=lambda item: item[1])
@@ -562,7 +748,11 @@ def _append_fraction_limit(
 ) -> None:
     current_value = _finite(current, math.nan)
     limit_value = _finite(limit, math.nan)
-    if math.isfinite(current_value) and math.isfinite(limit_value) and current_value > 0:
+    if (
+        math.isfinite(current_value)
+        and math.isfinite(limit_value)
+        and current_value > 0
+    ):
         limits.append((name, limit_value / current_value))
 
 
@@ -597,7 +787,9 @@ def _risk_bucket(value: Any, *, decimals: int, default: float) -> float:
     return round(value, decimals) if math.isfinite(value) else default
 
 
-def _sample_maturity(metrics: dict[str, Any], gate_config: dict[str, Any]) -> tuple[float, bool]:
+def _sample_maturity(
+    metrics: dict[str, Any], gate_config: dict[str, Any]
+) -> tuple[float, bool]:
     duration = _float(metrics.get("duration_hours"), 0.0)
     required = _float(gate_config.get("min_observation_hours"), math.nan)
     if not math.isfinite(required) or required <= 0:
@@ -606,7 +798,9 @@ def _sample_maturity(metrics: dict[str, Any], gate_config: dict[str, Any]) -> tu
     return maturity, maturity >= 0.25
 
 
-def _capture_needed(target_income: float, income_at_required_capture: float, required_capture: float) -> float:
+def _capture_needed(
+    target_income: float, income_at_required_capture: float, required_capture: float
+) -> float:
     if not (
         math.isfinite(target_income)
         and math.isfinite(income_at_required_capture)
@@ -619,6 +813,9 @@ def _capture_needed(target_income: float, income_at_required_capture: float, req
 
 
 def _income_buffer(income: float, target_income: float) -> float:
-    if not (math.isfinite(income) and math.isfinite(target_income)) or target_income <= 0:
+    if (
+        not (math.isfinite(income) and math.isfinite(target_income))
+        or target_income <= 0
+    ):
         return math.nan
     return income / target_income - 1.0

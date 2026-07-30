@@ -6,6 +6,41 @@ import json
 import pandas as pd
 import pytest
 
+import scripts.partial_rescue_config_grid as partial_rescue_grid
+from polymarket_lp.allocation import AllocationSelectionConfig, select_allocation
+from polymarket_lp.candidate_leaderboard import (
+    CandidateEvidence,
+    build_candidate_leaderboard,
+)
+from polymarket_lp.capital_risk import (
+    CapitalRiskStressConfig,
+    config_from_lp_manifest,
+    evaluate_capital_risk_stress,
+)
+from polymarket_lp.completion import evaluate_completion_audit
+from polymarket_lp.compliance import (
+    ComplianceAvailabilityConfig,
+    evaluate_compliance_availability,
+)
+from polymarket_lp.deployment_gate import (
+    DeploymentReadinessConfig,
+    evaluate_deployment_readiness,
+)
+from polymarket_lp.depth_gate import DepthReadinessConfig, evaluate_depth_readiness
+from polymarket_lp.drawdown_guard import (
+    DrawdownGuardConfig,
+    evaluate_drawdown_guard,
+    lp_config_from_manifest,
+)
+from polymarket_lp.governed_config import apply_risk_governor_to_lp_config
+from polymarket_lp.hedge import HedgeFeasibilityConfig, evaluate_hedge_feasibility
+from polymarket_lp.lifecycle import LifecycleAuditConfig, audit_order_lifecycle
+from polymarket_lp.lifecycle_ledger import (
+    append_lifecycle_event,
+    export_lifecycle_csv,
+    lifecycle_event_schema,
+    verify_lifecycle_ledger,
+)
 from polymarket_lp.lp_backtest import (
     LPConfig,
     depth_capped_quote_size,
@@ -29,40 +64,25 @@ from polymarket_lp.paper import (
     run_live_paper_loop,
     run_paper_analysis_to_files,
 )
-from polymarket_lp.target import TargetMonitorConfig, target_monitor_from_summary
-from polymarket_lp.telemetry import ExecutionTelemetryConfig, audit_execution_telemetry
-from polymarket_lp.lifecycle import LifecycleAuditConfig, audit_order_lifecycle
-from polymarket_lp.lifecycle_ledger import (
-    append_lifecycle_event,
-    export_lifecycle_csv,
-    lifecycle_event_schema,
-    verify_lifecycle_ledger,
-)
+from polymarket_lp.proof import evaluate_objective_proof
+from polymarket_lp.rescue_stress import RescueStressConfig, evaluate_rescue_stress
 from polymarket_lp.reward_reconciliation import (
     RewardReconciliationConfig,
     reconcile_paid_rewards,
     reward_reconciliation_schema,
 )
-from polymarket_lp.compliance import ComplianceAvailabilityConfig, evaluate_compliance_availability
-from polymarket_lp.deployment_gate import DeploymentReadinessConfig, evaluate_deployment_readiness
-from polymarket_lp.capital_risk import (
-    CapitalRiskStressConfig,
-    config_from_lp_manifest,
-    evaluate_capital_risk_stress,
-)
-from polymarket_lp.allocation import AllocationSelectionConfig, select_allocation
-from polymarket_lp.proof import ObjectiveProofConfig, evaluate_objective_proof
-from polymarket_lp.sustainability import SustainabilityStressConfig, evaluate_sustainability_stress
 from polymarket_lp.risk_governor import RiskGovernorConfig, evaluate_risk_governor
-from polymarket_lp.completion import evaluate_completion_audit
-from polymarket_lp.governed_config import apply_risk_governor_to_lp_config
-from polymarket_lp.hedge import HedgeFeasibilityConfig, evaluate_hedge_feasibility
-from polymarket_lp.rescue_stress import RescueStressConfig, evaluate_rescue_stress
-from polymarket_lp.depth_gate import DepthReadinessConfig, evaluate_depth_readiness
-from polymarket_lp.candidate_leaderboard import CandidateEvidence, build_candidate_leaderboard
-from polymarket_lp.drawdown_guard import DrawdownGuardConfig, evaluate_drawdown_guard, lp_config_from_manifest
+from polymarket_lp.sustainability import (
+    SustainabilityStressConfig,
+    evaluate_sustainability_stress,
+)
+from polymarket_lp.target import TargetMonitorConfig, target_monitor_from_summary
+from polymarket_lp.telemetry import ExecutionTelemetryConfig, audit_execution_telemetry
+from scripts.launch_live_paper_candidate import (
+    LaunchCandidateConfig,
+    write_launch_artifacts,
+)
 from scripts.paper_replay import make_lp_config
-from scripts.launch_live_paper_candidate import LaunchCandidateConfig, write_launch_artifacts
 from scripts.refresh_candidate_leaderboard import (
     _input_freshness_metrics,
     _input_staleness_error,
@@ -72,10 +92,13 @@ from scripts.refresh_candidate_leaderboard import (
     _safe_name,
     _split_named_path,
 )
-from scripts.update_target_status import _bootstrap_target_from_quotes, _capture_stress_grid, _json_safe
-from scripts.target_config_grid import SelectionConfig, _candidate_row
-import scripts.partial_rescue_config_grid as partial_rescue_grid
 from scripts.rolling_target_windows import _time_windows
+from scripts.target_config_grid import SelectionConfig, _candidate_row
+from scripts.update_target_status import (
+    _bootstrap_target_from_quotes,
+    _capture_stress_grid,
+    _json_safe,
+)
 
 
 def test_quote_enforces_pair_safety() -> None:
@@ -88,7 +111,9 @@ def test_quote_enforces_pair_safety() -> None:
             "reward_daily": 100,
         }
     )
-    q = quote_for_row(row, LPConfig(quote_size_shares=25, quote_offset=0.01, safety_margin=0.02))
+    q = quote_for_row(
+        row, LPConfig(quote_size_shares=25, quote_offset=0.01, safety_margin=0.02)
+    )
     assert q["pair_cost"] <= 0.98 + 1e-9
 
 
@@ -137,12 +162,21 @@ def test_paper_quotes_preserve_clob_depth_fields() -> None:
             }
         ]
     )
-    quotes = build_paper_quotes(snapshots, LPConfig(quote_size_shares=10, active_capital_limit=1000))
+    quotes = build_paper_quotes(
+        snapshots, LPConfig(quote_size_shares=10, active_capital_limit=1000)
+    )
     assert len(quotes) == 2
-    assert set(["yes_best_bid_size", "yes_best_ask_size", "no_best_bid_size", "no_best_ask_size"]).issubset(
+    assert set(
+        [
+            "yes_best_bid_size",
+            "yes_best_ask_size",
+            "no_best_bid_size",
+            "no_best_ask_size",
+        ]
+    ).issubset(quotes.columns)
+    assert set(["yes_best_bid", "yes_best_ask", "no_best_bid", "no_best_ask"]).issubset(
         quotes.columns
     )
-    assert set(["yes_best_bid", "yes_best_ask", "no_best_bid", "no_best_ask"]).issubset(quotes.columns)
     assert quotes["yes_best_bid_size"].iloc[0] == 123.0
     assert quotes["yes_best_ask"].iloc[0] == 0.53
 
@@ -159,7 +193,9 @@ def test_depth_cap_quote_size_uses_smaller_opposite_rescue_ask_depth() -> None:
             "no_best_ask_size": 30.0,
         }
     )
-    cfg = LPConfig(quote_size_shares=100, depth_cap_quote_size=True, depth_quote_size_fraction=0.9)
+    cfg = LPConfig(
+        quote_size_shares=100, depth_cap_quote_size=True, depth_quote_size_fraction=0.9
+    )
     assert depth_capped_quote_size(row, cfg) == 27.0
     q = quote_for_row(row, cfg)
     assert q["eligible"]
@@ -231,7 +267,9 @@ def test_partial_rescue_residual_cap_requires_book_depth() -> None:
     assert not q["eligible"]
 
 
-def test_quote_size_respects_per_market_inventory_budget_before_reward_scoring() -> None:
+def test_quote_size_respects_per_market_inventory_budget_before_reward_scoring() -> (
+    None
+):
     row = pd.Series(
         {
             "yes_mid": 0.62,
@@ -253,7 +291,10 @@ def test_quote_size_respects_per_market_inventory_budget_before_reward_scoring()
     q = quote_for_row(row, cfg)
     assert q["eligible"]
     assert float(q["quote_size"]) == pytest.approx(25.0 / float(q["yes_bid"]))
-    assert float(q["quote_size"]) * max(float(q["yes_bid"]), float(q["no_bid"])) <= 25.0 + 1e-9
+    assert (
+        float(q["quote_size"]) * max(float(q["yes_bid"]), float(q["no_bid"]))
+        <= 25.0 + 1e-9
+    )
 
 
 def test_paper_quote_selection_respects_total_one_sided_risk_cap() -> None:
@@ -286,12 +327,17 @@ def test_paper_quote_selection_respects_total_one_sided_risk_cap() -> None:
     assert quotes["condition_id"].nunique() == 2
     worst_risk = (
         quotes.drop_duplicates("condition_id")
-        .assign(one_sided=lambda df: df.apply(lambda row: max(row["bid_price"], 0) * row["size_shares"], axis=1))
-        ["one_sided"]
+        .assign(
+            one_sided=lambda df: df.apply(
+                lambda row: max(row["bid_price"], 0) * row["size_shares"], axis=1
+            )
+        )["one_sided"]
         .sum()
     )
     assert worst_risk <= cfg.max_total_unpaired + 1e-9
-    assert quote_one_sided_loss_to_zero(quote_for_row(snapshots.iloc[0], cfg)) == pytest.approx(50.0)
+    assert quote_one_sided_loss_to_zero(
+        quote_for_row(snapshots.iloc[0], cfg)
+    ) == pytest.approx(50.0)
 
 
 def test_handle_fill_pairs_opposite_inventory() -> None:
@@ -472,7 +518,9 @@ def test_rescue_stress_blocks_unrescueable_one_sided_loss() -> None:
 
 def test_synthetic_backtest_outputs_core_metrics() -> None:
     snapshots = make_synthetic_snapshots(seed=1, days=2, n_markets=6)
-    events, equity, summary = simulate_lp(snapshots, LPConfig(initial_capital=2000, quote_offset=0.025))
+    events, equity, summary = simulate_lp(
+        snapshots, LPConfig(initial_capital=2000, quote_offset=0.025)
+    )
     assert not events.empty
     assert not equity.empty
     assert not summary.empty
@@ -496,9 +544,37 @@ def test_default_filter_excludes_sports_and_crypto() -> None:
 def test_default_filter_excludes_sports_and_crypto_subcategories() -> None:
     snapshots = pd.DataFrame(
         [
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "nba", "category": "nba", "cluster": "nba", "reward_daily": 100, "max_incentive_spread": 0.05, "min_incentive_size": 20, "yes_mid": 0.5},
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "btc", "category": "markets", "cluster": "bitcoin", "tags": "btc,crypto", "reward_daily": 100, "max_incentive_spread": 0.05, "min_incentive_size": 20, "yes_mid": 0.5},
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "fed", "category": "economic-policy", "cluster": "economic-policy", "reward_daily": 100, "max_incentive_spread": 0.05, "min_incentive_size": 20, "yes_mid": 0.5},
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "nba",
+                "category": "nba",
+                "cluster": "nba",
+                "reward_daily": 100,
+                "max_incentive_spread": 0.05,
+                "min_incentive_size": 20,
+                "yes_mid": 0.5,
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "btc",
+                "category": "markets",
+                "cluster": "bitcoin",
+                "tags": "btc,crypto",
+                "reward_daily": 100,
+                "max_incentive_spread": 0.05,
+                "min_incentive_size": 20,
+                "yes_mid": 0.5,
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "fed",
+                "category": "economic-policy",
+                "cluster": "economic-policy",
+                "reward_daily": 100,
+                "max_incentive_spread": 0.05,
+                "min_incentive_size": 20,
+                "yes_mid": 0.5,
+            },
         ]
     )
     filtered = filter_snapshots_for_strategy(snapshots, LPConfig())
@@ -539,7 +615,9 @@ def test_build_paper_quotes_emits_two_sided_intents() -> None:
 
 
 def test_collect_live_reward_snapshots_parses_gamma_fixture() -> None:
-    def fake_get_json(url: str, params: dict[str, object] | None, timeout: float) -> object:
+    def fake_get_json(
+        url: str, params: dict[str, object] | None, timeout: float
+    ) -> object:
         assert url.endswith("/events")
         return [
             {
@@ -583,7 +661,9 @@ def test_collect_live_reward_snapshots_parses_gamma_fixture() -> None:
 
 
 def test_run_live_paper_loop_writes_manifest_without_orders(tmp_path) -> None:
-    def fake_get_json(url: str, params: dict[str, object] | None, timeout: float) -> object:
+    def fake_get_json(
+        url: str, params: dict[str, object] | None, timeout: float
+    ) -> object:
         return [
             {
                 "id": "event-1",
@@ -611,7 +691,9 @@ def test_run_live_paper_loop_writes_manifest_without_orders(tmp_path) -> None:
         snapshot_path=tmp_path / "snapshots.csv",
         quotes_path=tmp_path / "quotes.csv",
         manifest_path=tmp_path / "manifest.json",
-        lp_config=LPConfig(quote_size_shares=25, quote_offset=0.02, active_capital_limit=100),
+        lp_config=LPConfig(
+            quote_size_shares=25, quote_offset=0.02, active_capital_limit=100
+        ),
         snapshot_config=LiveSnapshotConfig(max_events=1),
         iterations=1,
         interval_seconds=0,
@@ -633,7 +715,9 @@ def test_run_live_paper_loop_refuses_existing_output_lock(tmp_path) -> None:
             snapshot_path=tmp_path / "snapshots.csv",
             quotes_path=tmp_path / "quotes.csv",
             manifest_path=tmp_path / "manifest.json",
-            lp_config=LPConfig(quote_size_shares=25, quote_offset=0.02, active_capital_limit=100),
+            lp_config=LPConfig(
+                quote_size_shares=25, quote_offset=0.02, active_capital_limit=100
+            ),
             snapshot_config=LiveSnapshotConfig(max_events=1),
             iterations=1,
             interval_seconds=0,
@@ -694,7 +778,9 @@ def test_analyze_paper_quotes_uses_next_snapshot_fill_proxy() -> None:
             },
         ]
     )
-    per_quote, summary = analyze_paper_quotes(snapshots, quotes, PaperAnalysisConfig(stale_mid_change=0.025))
+    per_quote, summary = analyze_paper_quotes(
+        snapshots, quotes, PaperAnalysisConfig(stale_mid_change=0.025)
+    )
     yes = per_quote[per_quote["side"].eq("YES")].iloc[0]
     no = per_quote[per_quote["side"].eq("NO")].iloc[0]
     assert bool(yes["would_fill"])
@@ -705,7 +791,9 @@ def test_analyze_paper_quotes_uses_next_snapshot_fill_proxy() -> None:
     assert summary["estimated_mark_to_next_pnl_if_all_fills_usdc"] < 0
 
 
-def test_analyze_paper_quotes_excludes_latest_right_censored_pending_from_quality_rate() -> None:
+def test_analyze_paper_quotes_excludes_latest_right_censored_pending_from_quality_rate() -> (
+    None
+):
     snapshots = pd.DataFrame(
         [
             {
@@ -777,8 +865,13 @@ def test_analyze_paper_quotes_excludes_latest_right_censored_pending_from_qualit
 
 def test_run_paper_analysis_to_files_writes_summary(tmp_path) -> None:
     snapshots = make_synthetic_snapshots(seed=3, days=1, n_markets=3)
-    quotes = build_paper_quotes(snapshots, LPConfig(quote_size_shares=25, quote_offset=0.025, active_capital_limit=200))
-    summary = run_paper_analysis_to_files(snapshots=snapshots, quotes=quotes, out_dir=tmp_path)
+    quotes = build_paper_quotes(
+        snapshots,
+        LPConfig(quote_size_shares=25, quote_offset=0.025, active_capital_limit=200),
+    )
+    summary = run_paper_analysis_to_files(
+        snapshots=snapshots, quotes=quotes, out_dir=tmp_path
+    )
     assert summary["snapshot_rows"] == len(snapshots)
     assert "paper analytics only" in summary["safety"]
     assert (tmp_path / "paper_summary.json").exists()
@@ -822,7 +915,9 @@ def test_target_monitor_flags_concentration_when_required() -> None:
     }
     result = target_monitor_from_summary(
         summary,
-        TargetMonitorConfig(target_monthly_usdc=1000, reward_to_loss_haircut=8, min_unique_markets=2),
+        TargetMonitorConfig(
+            target_monthly_usdc=1000, reward_to_loss_haircut=8, min_unique_markets=2
+        ),
     )
     assert result["gates"]["density_gate_passed"]
     assert not result["gates"]["diversification_gate_passed"]
@@ -957,7 +1052,12 @@ def test_execution_telemetry_audit_proves_reward_and_cancel_capture() -> None:
     )
     fills = pd.DataFrame(
         [
-            {"client_order_id": "o1", "fill_price": 0.4, "fill_size": 10, "fee_usdc": 0.01},
+            {
+                "client_order_id": "o1",
+                "fill_price": 0.4,
+                "fill_size": 10,
+                "fee_usdc": 0.01,
+            },
         ]
     )
     cancels = pd.DataFrame(
@@ -999,7 +1099,9 @@ def test_execution_telemetry_audit_rejects_missing_paid_rewards() -> None:
                 }
             ]
         ),
-        rewards=pd.DataFrame([{"estimated_reward_usdc": 10.0, "paid_reward_usdc": 0.0}]),
+        rewards=pd.DataFrame(
+            [{"estimated_reward_usdc": 10.0, "paid_reward_usdc": 0.0}]
+        ),
     )
     assert not result["gates"]["reward_payment_present"]
     assert not result["gates"]["deployment_telemetry_passed"]
@@ -1014,7 +1116,9 @@ def test_compliance_gate_blocks_endpoint_and_session_restrictions() -> None:
     assert result["status"] == "new_order_blocked"
     assert not result["gates"]["new_order_placement_allowed"]
     assert "geoblock endpoint reports blocked" in result["blockers"]
-    assert "session/operator country is in new-order restricted set" in result["blockers"]
+    assert (
+        "session/operator country is in new-order restricted set" in result["blockers"]
+    )
     assert result["observed"]["payload_redacted"]["ip"] == "REDACTED"
 
 
@@ -1050,7 +1154,11 @@ def test_compliance_gate_allows_only_after_all_clearance_proofs() -> None:
 
 def test_deployment_readiness_requires_sample_and_telemetry() -> None:
     target_status = {
-        "paper_summary": {"duration_hours": 1, "unique_markets_quoted": 2, "max_active_pair_notional": 1500},
+        "paper_summary": {
+            "duration_hours": 1,
+            "unique_markets_quoted": 2,
+            "max_active_pair_notional": 1500,
+        },
         "target_monitor": {
             "input": {
                 "duration_hours": 1,
@@ -1060,7 +1168,10 @@ def test_deployment_readiness_requires_sample_and_telemetry() -> None:
                 "stale_fill_rate": 0,
                 "pending_quote_rate": 0,
             },
-            "target_math": {"net_monthly_after_loss_haircut": 2500, "capture_needed_for_target": 0.4},
+            "target_math": {
+                "net_monthly_after_loss_haircut": 2500,
+                "capture_needed_for_target": 0.4,
+            },
             "gates": {
                 "density_gate_passed": True,
                 "capture_gate_passed": True,
@@ -1071,9 +1182,13 @@ def test_deployment_readiness_requires_sample_and_telemetry() -> None:
             },
         },
         "bootstrap_target": {"net_monthly_p05": 2400, "intervals": 10},
-        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200}],
+        "capture_stress_grid": [
+            {"capture_rate": 0.5, "captured_net_monthly_p05": 1200}
+        ],
     }
-    result = evaluate_deployment_readiness(target_status=target_status, cfg=DeploymentReadinessConfig())
+    result = evaluate_deployment_readiness(
+        target_status=target_status, cfg=DeploymentReadinessConfig()
+    )
     assert result["gates"]["capture_stress_gate_passed"]
     assert not result["gates"]["sample_gate_passed"]
     assert not result["gates"]["telemetry_gate_passed"]
@@ -1091,7 +1206,10 @@ def test_deployment_readiness_passes_when_all_gates_pass() -> None:
                 "stale_fill_rate": 0,
                 "pending_quote_rate": 0,
             },
-            "target_math": {"net_monthly_after_loss_haircut": 2500, "capture_needed_for_target": 0.4},
+            "target_math": {
+                "net_monthly_after_loss_haircut": 2500,
+                "capture_needed_for_target": 0.4,
+            },
             "gates": {
                 "density_gate_passed": True,
                 "capture_gate_passed": True,
@@ -1101,10 +1219,14 @@ def test_deployment_readiness_passes_when_all_gates_pass() -> None:
                 "sample_gate_passed": True,
             },
         },
-        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200}],
+        "capture_stress_grid": [
+            {"capture_rate": 0.5, "captured_net_monthly_p05": 1200}
+        ],
     }
     telemetry = {"gates": {"deployment_telemetry_passed": True}}
-    result = evaluate_deployment_readiness(target_status=target_status, telemetry_audit=telemetry)
+    result = evaluate_deployment_readiness(
+        target_status=target_status, telemetry_audit=telemetry
+    )
     assert result["gates"]["deployment_ready"]
     assert result["blockers"] == []
 
@@ -1120,7 +1242,10 @@ def test_deployment_readiness_blocks_pending_quotes() -> None:
                 "stale_fill_rate": 0,
                 "pending_quote_rate": 0.5,
             },
-            "target_math": {"net_monthly_after_loss_haircut": 2500, "capture_needed_for_target": 0.4},
+            "target_math": {
+                "net_monthly_after_loss_haircut": 2500,
+                "capture_needed_for_target": 0.4,
+            },
             "gates": {
                 "density_gate_passed": True,
                 "capture_gate_passed": True,
@@ -1130,10 +1255,14 @@ def test_deployment_readiness_blocks_pending_quotes() -> None:
                 "sample_gate_passed": True,
             },
         },
-        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200}],
+        "capture_stress_grid": [
+            {"capture_rate": 0.5, "captured_net_monthly_p05": 1200}
+        ],
     }
     telemetry = {"gates": {"deployment_telemetry_passed": True}}
-    result = evaluate_deployment_readiness(target_status=target_status, telemetry_audit=telemetry)
+    result = evaluate_deployment_readiness(
+        target_status=target_status, telemetry_audit=telemetry
+    )
     assert not result["gates"]["pending_quote_gate_passed"]
     assert not result["gates"]["deployment_ready"]
 
@@ -1150,7 +1279,10 @@ def test_deployment_readiness_blocks_mid_move_risk() -> None:
                 "stale_fill_rate": 0,
                 "pending_quote_rate": 0,
             },
-            "target_math": {"net_monthly_after_loss_haircut": 2500, "capture_needed_for_target": 0.4},
+            "target_math": {
+                "net_monthly_after_loss_haircut": 2500,
+                "capture_needed_for_target": 0.4,
+            },
             "gates": {
                 "density_gate_passed": True,
                 "capture_gate_passed": True,
@@ -1160,7 +1292,9 @@ def test_deployment_readiness_blocks_mid_move_risk() -> None:
                 "sample_gate_passed": True,
             },
         },
-        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200}],
+        "capture_stress_grid": [
+            {"capture_rate": 0.5, "captured_net_monthly_p05": 1200}
+        ],
     }
     telemetry = {"gates": {"deployment_telemetry_passed": True}}
     result = evaluate_deployment_readiness(
@@ -1183,7 +1317,10 @@ def test_deployment_readiness_blocks_low_cash_reserve() -> None:
                 "stale_fill_rate": 0,
                 "pending_quote_rate": 0,
             },
-            "target_math": {"net_monthly_after_loss_haircut": 2500, "capture_needed_for_target": 0.4},
+            "target_math": {
+                "net_monthly_after_loss_haircut": 2500,
+                "capture_needed_for_target": 0.4,
+            },
             "gates": {
                 "density_gate_passed": True,
                 "capture_gate_passed": True,
@@ -1193,7 +1330,9 @@ def test_deployment_readiness_blocks_low_cash_reserve() -> None:
                 "sample_gate_passed": True,
             },
         },
-        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200}],
+        "capture_stress_grid": [
+            {"capture_rate": 0.5, "captured_net_monthly_p05": 1200}
+        ],
     }
     telemetry = {"gates": {"deployment_telemetry_passed": True}}
     result = evaluate_deployment_readiness(
@@ -1223,7 +1362,12 @@ def test_target_config_grid_rejects_pending_and_midmove_risk() -> None:
         "pending_quote_rate": 0.2,
         "max_abs_mid_change_to_next": 0.01,
     }
-    monitor = {"target_math": {"net_monthly_after_loss_haircut": 3000, "capture_needed_for_target": 1 / 3}}
+    monitor = {
+        "target_math": {
+            "net_monthly_after_loss_haircut": 3000,
+            "capture_needed_for_target": 1 / 3,
+        }
+    }
     bootstrap = {
         "captured_net_monthly_p05": 1500,
         "captured_p05_target_gate_passed": True,
@@ -1258,31 +1402,83 @@ def test_rolling_target_windows_are_fixed_length_and_step() -> None:
 def test_capital_risk_stress_reports_recovery_days() -> None:
     quotes = pd.DataFrame(
         [
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m1", "cluster": "macro", "side": "YES", "bid_price": 0.8, "size_shares": 100, "active_order_notional_pair": 95},
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m1", "cluster": "macro", "side": "NO", "bid_price": 0.15, "size_shares": 100, "active_order_notional_pair": 95},
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m2", "cluster": "macro", "side": "YES", "bid_price": 0.4, "size_shares": 100, "active_order_notional_pair": 95},
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m2", "cluster": "macro", "side": "NO", "bid_price": 0.55, "size_shares": 100, "active_order_notional_pair": 95},
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m1",
+                "cluster": "macro",
+                "side": "YES",
+                "bid_price": 0.8,
+                "size_shares": 100,
+                "active_order_notional_pair": 95,
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m1",
+                "cluster": "macro",
+                "side": "NO",
+                "bid_price": 0.15,
+                "size_shares": 100,
+                "active_order_notional_pair": 95,
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m2",
+                "cluster": "macro",
+                "side": "YES",
+                "bid_price": 0.4,
+                "size_shares": 100,
+                "active_order_notional_pair": 95,
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m2",
+                "cluster": "macro",
+                "side": "NO",
+                "bid_price": 0.55,
+                "size_shares": 100,
+                "active_order_notional_pair": 95,
+            },
         ]
     )
-    target_status = {"capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1500.0}]}
-    result = evaluate_capital_risk_stress(quotes, target_status=target_status, cfg=CapitalRiskStressConfig())
+    target_status = {
+        "capture_stress_grid": [
+            {"capture_rate": 0.5, "captured_net_monthly_p05": 1500.0}
+        ]
+    }
+    result = evaluate_capital_risk_stress(
+        quotes, target_status=target_status, cfg=CapitalRiskStressConfig()
+    )
     assert result["metrics"]["all_active_unhedged_one_side_loss_to_zero"] == 135.0
     assert result["metrics"]["configured_inventory_cap_loss_to_zero"] == 115.0
     assert result["metrics"]["capped_recovery_days_at_p05_income"] == 115.0 / 50.0
-    assert result["metrics"]["capture_needed_after_cap_loss"] == pytest.approx(0.37166666666666665)
+    assert result["metrics"]["capture_needed_after_cap_loss"] == pytest.approx(
+        0.37166666666666665
+    )
     assert result["gates"]["capital_risk_stress_passed"]
 
 
 def test_capital_risk_stress_blocks_total_ruin() -> None:
     quotes = pd.DataFrame(
         [
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": f"m{i}", "cluster": "macro", "side": "YES", "bid_price": 0.9, "size_shares": 1000, "active_order_notional_pair": 950}
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": f"m{i}",
+                "cluster": "macro",
+                "side": "YES",
+                "bid_price": 0.9,
+                "size_shares": 1000,
+                "active_order_notional_pair": 950,
+            }
             for i in range(3)
         ]
     )
     result = evaluate_capital_risk_stress(
         quotes,
-        target_status={"capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1000.0}]},
+        target_status={
+            "capture_stress_grid": [
+                {"capture_rate": 0.5, "captured_net_monthly_p05": 1000.0}
+            ]
+        },
         cfg=CapitalRiskStressConfig(initial_capital=2000),
     )
     assert not result["gates"]["no_total_ruin_unhedged_gate_passed"]
@@ -1314,7 +1510,11 @@ def test_capital_risk_stress_blocks_single_market_concentration() -> None:
     )
     result = evaluate_capital_risk_stress(
         quotes,
-        target_status={"capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 2000.0}]},
+        target_status={
+            "capture_stress_grid": [
+                {"capture_rate": 0.5, "captured_net_monthly_p05": 2000.0}
+            ]
+        },
         cfg=CapitalRiskStressConfig(
             initial_capital=2000,
             min_latest_markets=2,
@@ -1331,13 +1531,49 @@ def test_capital_risk_stress_blocks_single_market_concentration() -> None:
 def test_capital_risk_stress_blocks_high_capture_needed_after_cap_loss() -> None:
     quotes = pd.DataFrame(
         [
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m1", "cluster": "macro", "side": "YES", "bid_price": 0.5, "size_shares": 100, "active_order_notional_pair": 95},
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m1", "cluster": "macro", "side": "NO", "bid_price": 0.45, "size_shares": 100, "active_order_notional_pair": 95},
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m2", "cluster": "other", "side": "YES", "bid_price": 0.5, "size_shares": 100, "active_order_notional_pair": 95},
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m2", "cluster": "other", "side": "NO", "bid_price": 0.45, "size_shares": 100, "active_order_notional_pair": 95},
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m1",
+                "cluster": "macro",
+                "side": "YES",
+                "bid_price": 0.5,
+                "size_shares": 100,
+                "active_order_notional_pair": 95,
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m1",
+                "cluster": "macro",
+                "side": "NO",
+                "bid_price": 0.45,
+                "size_shares": 100,
+                "active_order_notional_pair": 95,
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m2",
+                "cluster": "other",
+                "side": "YES",
+                "bid_price": 0.5,
+                "size_shares": 100,
+                "active_order_notional_pair": 95,
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m2",
+                "cluster": "other",
+                "side": "NO",
+                "bid_price": 0.45,
+                "size_shares": 100,
+                "active_order_notional_pair": 95,
+            },
         ]
     )
-    target_status = {"capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200.0}]}
+    target_status = {
+        "capture_stress_grid": [
+            {"capture_rate": 0.5, "captured_net_monthly_p05": 1200.0}
+        ]
+    }
     result = evaluate_capital_risk_stress(
         quotes,
         target_status=target_status,
@@ -1351,16 +1587,54 @@ def test_capital_risk_stress_blocks_high_capture_needed_after_cap_loss() -> None
 def test_capital_risk_autonomous_recovery_can_warn_on_after_cap_shortfall() -> None:
     quotes = pd.DataFrame(
         [
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m1", "cluster": "macro", "side": "YES", "bid_price": 0.5, "size_shares": 100, "active_order_notional_pair": 95},
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m1", "cluster": "macro", "side": "NO", "bid_price": 0.45, "size_shares": 100, "active_order_notional_pair": 95},
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m2", "cluster": "other", "side": "YES", "bid_price": 0.5, "size_shares": 100, "active_order_notional_pair": 95},
-            {"timestamp": "2026-01-01T00:00:00Z", "condition_id": "m2", "cluster": "other", "side": "NO", "bid_price": 0.45, "size_shares": 100, "active_order_notional_pair": 95},
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m1",
+                "cluster": "macro",
+                "side": "YES",
+                "bid_price": 0.5,
+                "size_shares": 100,
+                "active_order_notional_pair": 95,
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m1",
+                "cluster": "macro",
+                "side": "NO",
+                "bid_price": 0.45,
+                "size_shares": 100,
+                "active_order_notional_pair": 95,
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m2",
+                "cluster": "other",
+                "side": "YES",
+                "bid_price": 0.5,
+                "size_shares": 100,
+                "active_order_notional_pair": 95,
+            },
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "condition_id": "m2",
+                "cluster": "other",
+                "side": "NO",
+                "bid_price": 0.45,
+                "size_shares": 100,
+                "active_order_notional_pair": 95,
+            },
         ]
     )
     result = evaluate_capital_risk_stress(
         quotes,
-        target_status={"capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200.0}]},
-        cfg=CapitalRiskStressConfig(max_capture_needed_after_cap_loss=0.40, require_after_cap_target=False),
+        target_status={
+            "capture_stress_grid": [
+                {"capture_rate": 0.5, "captured_net_monthly_p05": 1200.0}
+            ]
+        },
+        cfg=CapitalRiskStressConfig(
+            max_capture_needed_after_cap_loss=0.40, require_after_cap_target=False
+        ),
     )
     assert result["metrics"]["capture_needed_after_cap_loss"] > 0.40
     assert result["gates"]["capture_needed_after_cap_loss_gate_passed"]
@@ -1450,7 +1724,10 @@ def test_objective_proof_requires_sample_rolling_telemetry_and_deployment() -> N
             "p05_monthly_50pct_capture": 1800,
             "net_monthly_after_loss_haircut": 3600,
         },
-        "risk": {"cash_reserve_fraction": 0.56, "unhedged_loss_fraction_of_capital": 0.35},
+        "risk": {
+            "cash_reserve_fraction": 0.56,
+            "unhedged_loss_fraction_of_capital": 0.35,
+        },
     }
     allocation = {
         "status": "allocation_selected",
@@ -1469,7 +1746,9 @@ def test_objective_proof_requires_sample_rolling_telemetry_and_deployment() -> N
             },
         },
     }
-    result = evaluate_objective_proof(evidence_packet=evidence, allocation_selection=allocation)
+    result = evaluate_objective_proof(
+        evidence_packet=evidence, allocation_selection=allocation
+    )
     assert result["status"] == "objective_not_proven"
     assert "needs >=24h public-paper observation" in result["blockers"]
     assert "order/fill/cancel/paid-reward telemetry missing" in result["blockers"]
@@ -1492,7 +1771,10 @@ def test_objective_proof_passes_when_all_required_gates_pass() -> None:
             "p05_monthly_50pct_capture": 1800,
             "net_monthly_after_loss_haircut": 3600,
         },
-        "risk": {"cash_reserve_fraction": 0.56, "unhedged_loss_fraction_of_capital": 0.35},
+        "risk": {
+            "cash_reserve_fraction": 0.56,
+            "unhedged_loss_fraction_of_capital": 0.35,
+        },
     }
     allocation = {
         "status": "allocation_selected",
@@ -1511,12 +1793,16 @@ def test_objective_proof_passes_when_all_required_gates_pass() -> None:
             },
         },
     }
-    result = evaluate_objective_proof(evidence_packet=evidence, allocation_selection=allocation)
+    result = evaluate_objective_proof(
+        evidence_packet=evidence, allocation_selection=allocation
+    )
     assert result["status"] == "objective_proven"
     assert result["blockers"] == []
 
 
-def test_sustainability_stress_passes_configured_cap_but_warns_unhedged_recovery() -> None:
+def test_sustainability_stress_passes_configured_cap_but_warns_unhedged_recovery() -> (
+    None
+):
     evidence = {
         "income": {"p05_monthly_raw": 3600.0},
         "risk": {
@@ -1544,11 +1830,19 @@ def test_sustainability_stress_passes_configured_cap_but_warns_unhedged_recovery
     assert result["status"] == "sustainability_stress_passed"
     assert result["gates"]["configured_cap_shock_income_passed"]
     assert not result["gates"]["unhedged_recovery_warning_passed"]
-    assert result["metrics"]["breakeven_reward_multiplier_configured_cap_at_reference_capture"] < 0.75
+    assert (
+        result["metrics"][
+            "breakeven_reward_multiplier_configured_cap_at_reference_capture"
+        ]
+        < 0.75
+    )
 
 
 def test_sustainability_stress_fails_when_cap_loss_breaks_target() -> None:
-    evidence = {"income": {"p05_monthly_raw": 2200.0}, "risk": {"configured_inventory_cap_loss_to_zero": 250.0}}
+    evidence = {
+        "income": {"p05_monthly_raw": 2200.0},
+        "risk": {"configured_inventory_cap_loss_to_zero": 250.0},
+    }
     allocation = {
         "status": "allocation_selected",
         "selected": {
@@ -1560,9 +1854,14 @@ def test_sustainability_stress_fails_when_cap_loss_breaks_target() -> None:
             },
         },
     }
-    result = evaluate_sustainability_stress(evidence_packet=evidence, allocation_selection=allocation)
+    result = evaluate_sustainability_stress(
+        evidence_packet=evidence, allocation_selection=allocation
+    )
     assert result["status"] == "sustainability_stress_failed"
-    assert "configured-cap monthly loss shock drops p05 income below target" in result["blockers"]
+    assert (
+        "configured-cap monthly loss shock drops p05 income below target"
+        in result["blockers"]
+    )
 
 
 def test_risk_governor_continues_paper_when_risk_passes_but_proof_missing() -> None:
@@ -1615,11 +1914,16 @@ def test_risk_governor_scales_down_when_cash_or_loss_limits_bind() -> None:
         },
         "gates": {},
     }
-    allocation = {"status": "allocation_selected", "selected": {"metrics": {"qsize": 800, "captured_net_monthly_p05": 2000}}}
+    allocation = {
+        "status": "allocation_selected",
+        "selected": {"metrics": {"qsize": 800, "captured_net_monthly_p05": 2000}},
+    }
     result = evaluate_risk_governor(
         evidence_packet=evidence,
         allocation_selection=allocation,
-        cfg=RiskGovernorConfig(min_cash_reserve_fraction=0.40, max_unhedged_loss_fraction=0.50),
+        cfg=RiskGovernorConfig(
+            min_cash_reserve_fraction=0.40, max_unhedged_loss_fraction=0.50
+        ),
     )
     assert result["metrics"]["recommended_scale"] == 0.75
     assert result["metrics"]["recommended_qsize"] == 600
@@ -1634,14 +1938,23 @@ def test_completion_audit_requires_all_terminal_gates() -> None:
         },
         sustainability_stress={
             "status": "sustainability_stress_passed",
-            "metrics": {"reference_monthly_income": 1860, "configured_cap_reference_monthly_after_loss": 1680},
+            "metrics": {
+                "reference_monthly_income": 1860,
+                "configured_cap_reference_monthly_after_loss": 1680,
+            },
         },
         risk_governor={
             "risk_core_passed": True,
             "deployment_allowed": False,
-            "metrics": {"recommended_qsize": 300, "governing_50pct_p05_monthly_income": 1860},
+            "metrics": {
+                "recommended_qsize": 300,
+                "governing_50pct_p05_monthly_income": 1860,
+            },
         },
-        rescue_stress={"status": "rescue_stress_passed", "metrics": {"price_feasible_rate": 1.0}},
+        rescue_stress={
+            "status": "rescue_stress_passed",
+            "metrics": {"price_feasible_rate": 1.0},
+        },
     )
     assert result["status"] == "completion_not_proven"
     assert "objective proof audit is not proven" in result["blockers"]
@@ -1650,14 +1963,26 @@ def test_completion_audit_requires_all_terminal_gates() -> None:
 
 def test_completion_audit_passes_when_terminal_gates_pass() -> None:
     result = evaluate_completion_audit(
-        objective_audit={"objective_proven": True, "metrics": {"packet_50pct_capture_p05": 1900}},
-        sustainability_stress={"status": "sustainability_stress_passed", "metrics": {"reference_monthly_income": 1860}},
+        objective_audit={
+            "objective_proven": True,
+            "metrics": {"packet_50pct_capture_p05": 1900},
+        },
+        sustainability_stress={
+            "status": "sustainability_stress_passed",
+            "metrics": {"reference_monthly_income": 1860},
+        },
         risk_governor={
             "risk_core_passed": True,
             "deployment_allowed": True,
-            "metrics": {"recommended_qsize": 300, "governing_50pct_p05_monthly_income": 1860},
+            "metrics": {
+                "recommended_qsize": 300,
+                "governing_50pct_p05_monthly_income": 1860,
+            },
         },
-        rescue_stress={"status": "rescue_stress_passed", "metrics": {"price_feasible_rate": 1.0}},
+        rescue_stress={
+            "status": "rescue_stress_passed",
+            "metrics": {"price_feasible_rate": 1.0},
+        },
     )
     assert result["status"] == "completion_proven"
     assert result["blockers"] == []
@@ -1665,9 +1990,19 @@ def test_completion_audit_passes_when_terminal_gates_pass() -> None:
 
 def test_completion_audit_requires_rescue_stress_when_enabled() -> None:
     result = evaluate_completion_audit(
-        objective_audit={"objective_proven": True, "metrics": {"packet_50pct_capture_p05": 1900}},
-        sustainability_stress={"status": "sustainability_stress_passed", "metrics": {"reference_monthly_income": 1860}},
-        risk_governor={"risk_core_passed": True, "deployment_allowed": True, "metrics": {}},
+        objective_audit={
+            "objective_proven": True,
+            "metrics": {"packet_50pct_capture_p05": 1900},
+        },
+        sustainability_stress={
+            "status": "sustainability_stress_passed",
+            "metrics": {"reference_monthly_income": 1860},
+        },
+        risk_governor={
+            "risk_core_passed": True,
+            "deployment_allowed": True,
+            "metrics": {},
+        },
     )
     assert result["status"] == "completion_not_proven"
     assert "rescue stress is not passed" in result["blockers"]
@@ -1704,7 +2039,9 @@ def test_rescue_stress_reports_taker_depth_feasibility() -> None:
     )
     result = evaluate_rescue_stress(
         quotes,
-        RescueStressConfig(require_taker_rescue_depth=True, min_taker_rescue_feasible_rate=1.0),
+        RescueStressConfig(
+            require_taker_rescue_depth=True, min_taker_rescue_feasible_rate=1.0
+        ),
     )
     assert result["status"] == "rescue_stress_passed"
     assert result["metrics"]["taker_rescue_book_scenarios"] == 2
@@ -1797,12 +2134,22 @@ def test_rescue_stress_blocks_excess_partial_taker_residual_loss() -> None:
 
 def test_depth_readiness_requires_income_sample_and_taker_depth() -> None:
     target_status = {
-        "paper_summary": {"duration_hours": 6.5, "quote_rows": 30, "quote_data_quality_counts": {"clob_book_both_sides": 30}},
+        "paper_summary": {
+            "duration_hours": 6.5,
+            "quote_rows": 30,
+            "quote_data_quality_counts": {"clob_book_both_sides": 30},
+        },
         "target_monitor": {
-            "input": {"duration_hours": 6.5, "quote_rows": 30, "unique_markets_quoted": 3},
+            "input": {
+                "duration_hours": 6.5,
+                "quote_rows": 30,
+                "unique_markets_quoted": 3,
+            },
             "target_math": {"net_monthly_after_loss_haircut": 3000},
         },
-        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200}],
+        "capture_stress_grid": [
+            {"capture_rate": 0.5, "captured_net_monthly_p05": 1200}
+        ],
     }
     rescue = {
         "metrics": {
@@ -1815,7 +2162,9 @@ def test_depth_readiness_requires_income_sample_and_taker_depth() -> None:
     result = evaluate_depth_readiness(
         target_status=target_status,
         rescue_stress=rescue,
-        cfg=DepthReadinessConfig(min_observation_hours=6, min_quote_rows=24, min_book_scenarios=24),
+        cfg=DepthReadinessConfig(
+            min_observation_hours=6, min_quote_rows=24, min_book_scenarios=24
+        ),
     )
     assert result["status"] == "depth_ready"
     assert result["blockers"] == []
@@ -1823,12 +2172,22 @@ def test_depth_readiness_requires_income_sample_and_taker_depth() -> None:
 
 def test_depth_readiness_can_accept_partial_rescue_residual_cap() -> None:
     target_status = {
-        "paper_summary": {"duration_hours": 6.5, "quote_rows": 30, "quote_data_quality_counts": {"clob_book_both_sides": 30}},
+        "paper_summary": {
+            "duration_hours": 6.5,
+            "quote_rows": 30,
+            "quote_data_quality_counts": {"clob_book_both_sides": 30},
+        },
         "target_monitor": {
-            "input": {"duration_hours": 6.5, "quote_rows": 30, "unique_markets_quoted": 3},
+            "input": {
+                "duration_hours": 6.5,
+                "quote_rows": 30,
+                "unique_markets_quoted": 3,
+            },
             "target_math": {"net_monthly_after_loss_haircut": 3000},
         },
-        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1200}],
+        "capture_stress_grid": [
+            {"capture_rate": 0.5, "captured_net_monthly_p05": 1200}
+        ],
     }
     rescue = {
         "metrics": {
@@ -1859,12 +2218,22 @@ def test_depth_readiness_can_accept_partial_rescue_residual_cap() -> None:
 
 def test_depth_readiness_residual_cap_has_float_tolerance() -> None:
     target_status = {
-        "paper_summary": {"duration_hours": 6.0, "quote_rows": 24, "quote_data_quality_counts": {"clob_book_both_sides": 24}},
+        "paper_summary": {
+            "duration_hours": 6.0,
+            "quote_rows": 24,
+            "quote_data_quality_counts": {"clob_book_both_sides": 24},
+        },
         "target_monitor": {
-            "input": {"duration_hours": 6.0, "quote_rows": 24, "unique_markets_quoted": 2},
+            "input": {
+                "duration_hours": 6.0,
+                "quote_rows": 24,
+                "unique_markets_quoted": 2,
+            },
             "target_math": {"net_monthly_after_loss_haircut": 3000},
         },
-        "capture_stress_grid": [{"capture_rate": 0.5, "captured_net_monthly_p05": 1000.0}],
+        "capture_stress_grid": [
+            {"capture_rate": 0.5, "captured_net_monthly_p05": 1000.0}
+        ],
     }
     rescue = {
         "metrics": {
@@ -1891,9 +2260,17 @@ def test_depth_readiness_residual_cap_has_float_tolerance() -> None:
 def test_depth_readiness_blocks_short_non_depth_sample() -> None:
     result = evaluate_depth_readiness(
         target_status={
-            "paper_summary": {"duration_hours": 1, "quote_rows": 6, "quote_data_quality_counts": {"gamma_best_bid_ask": 6}},
+            "paper_summary": {
+                "duration_hours": 1,
+                "quote_rows": 6,
+                "quote_data_quality_counts": {"gamma_best_bid_ask": 6},
+            },
             "target_monitor": {
-                "input": {"duration_hours": 1, "quote_rows": 6, "unique_markets_quoted": 1},
+                "input": {
+                    "duration_hours": 1,
+                    "quote_rows": 6,
+                    "unique_markets_quoted": 1,
+                },
                 "target_math": {"net_monthly_after_loss_haircut": 4000},
             },
         },
@@ -1927,7 +2304,9 @@ def test_governed_config_applies_risk_governor_size_and_cash_cap() -> None:
 def test_governed_config_rejects_failed_core_gates() -> None:
     cfg = LPConfig()
     try:
-        apply_risk_governor_to_lp_config(cfg, {"risk_core_passed": False, "metrics": {"recommended_qsize": 300}})
+        apply_risk_governor_to_lp_config(
+            cfg, {"risk_core_passed": False, "metrics": {"recommended_qsize": 300}}
+        )
     except ValueError as exc:
         assert "core gates" in str(exc)
     else:
@@ -2011,7 +2390,9 @@ def test_hedge_feasibility_blocks_when_cap_or_slippage_fails() -> None:
     }
     result = evaluate_hedge_feasibility(
         capital_risk=capital_risk,
-        cfg=HedgeFeasibilityConfig(min_loss_reduction_fraction=0.5, max_configured_cap_loss_fraction=0.25),
+        cfg=HedgeFeasibilityConfig(
+            min_loss_reduction_fraction=0.5, max_configured_cap_loss_fraction=0.25
+        ),
     )
     assert result["status"] == "hedge_not_feasible"
     assert not result["gates"]["pair_lock_when_both_sides_fill_passed"]
@@ -2073,14 +2454,19 @@ def test_candidate_leaderboard_prefers_depth_ready_then_residual_risk() -> None:
         "blockers": [],
     }
     result = build_candidate_leaderboard(
-        [CandidateEvidence("weak_short_sample", weak), CandidateEvidence("ready", ready)]
+        [
+            CandidateEvidence("weak_short_sample", weak),
+            CandidateEvidence("ready", ready),
+        ]
     )
     assert result["status"] == "public_paper_leader_depth_ready"
     assert result["leader"]["name"] == "ready"
     assert result["candidates"][1]["name"] == "weak_short_sample"
 
 
-def test_candidate_leaderboard_ignores_tiny_residual_float_noise_before_income() -> None:
+def test_candidate_leaderboard_ignores_tiny_residual_float_noise_before_income() -> (
+    None
+):
     base_gate = {
         "status": "depth_not_ready",
         "metrics": {
@@ -2112,13 +2498,18 @@ def test_candidate_leaderboard_ignores_tiny_residual_float_noise_before_income()
     higher_income["metrics"]["income_p05_at_required_capture"] = 1800
     higher_income["metrics"]["latest_taker_residual_loss_to_zero"] = 10.000000000000005
     result = build_candidate_leaderboard(
-        [CandidateEvidence("lower_income_float_edge", lower_income), CandidateEvidence("higher_income", higher_income)]
+        [
+            CandidateEvidence("lower_income_float_edge", lower_income),
+            CandidateEvidence("higher_income", higher_income),
+        ]
     )
     assert result["leader"]["name"] == "higher_income"
 
 
 def test_candidate_leaderboard_exposes_risk_income_and_sample_policy_leaders() -> None:
-    def gate(income: float, residual: float, hours: float, rows: int) -> dict[str, object]:
+    def gate(
+        income: float, residual: float, hours: float, rows: int
+    ) -> dict[str, object]:
         return {
             "status": "depth_not_ready",
             "config": {"target_monthly_usdc": 1000},
@@ -2193,25 +2584,37 @@ def test_candidate_leaderboard_demotes_drawdown_core_failures() -> None:
         "status": "drawdown_guard_sample_pending",
         "risk_core_passed": True,
         "gates": {"sample_hours_gate_passed": False, "drawdown_guard_passed": False},
-        "metrics": {"reward_to_trading_loss_ratio": 3.2, "max_drawdown_mtm_fraction": 0.001},
+        "metrics": {
+            "reward_to_trading_loss_ratio": 3.2,
+            "max_drawdown_mtm_fraction": 0.001,
+        },
         "blockers": ["needs sample"],
     }
     bad_drawdown = {
         "status": "drawdown_guard_failed",
         "risk_core_passed": False,
         "gates": {"sample_hours_gate_passed": False, "drawdown_guard_passed": False},
-        "metrics": {"reward_to_trading_loss_ratio": 2.0, "max_drawdown_mtm_fraction": 0.001},
+        "metrics": {
+            "reward_to_trading_loss_ratio": 2.0,
+            "max_drawdown_mtm_fraction": 0.001,
+        },
         "blockers": ["reward/trading-loss ratio below 3.00"],
     }
     result = build_candidate_leaderboard(
         [
-            CandidateEvidence("higher_income_bad_dd", gate(1800, 0), drawdown_guard=bad_drawdown),
-            CandidateEvidence("lower_income_good_dd", gate(1200, 5), drawdown_guard=good_drawdown),
+            CandidateEvidence(
+                "higher_income_bad_dd", gate(1800, 0), drawdown_guard=bad_drawdown
+            ),
+            CandidateEvidence(
+                "lower_income_good_dd", gate(1200, 5), drawdown_guard=good_drawdown
+            ),
         ]
     )
     assert result["leader"]["name"] == "lower_income_good_dd"
     assert not result["candidates"][1]["drawdown_core_passed"]
-    assert result["policy_leaders"]["risk_first_leader"]["name"] == "lower_income_good_dd"
+    assert (
+        result["policy_leaders"]["risk_first_leader"]["name"] == "lower_income_good_dd"
+    )
 
 
 def test_candidate_leaderboard_demotes_capital_risk_failures() -> None:
@@ -2247,7 +2650,10 @@ def test_candidate_leaderboard_demotes_capital_risk_failures() -> None:
         "status": "drawdown_guard_sample_pending",
         "risk_core_passed": True,
         "gates": {"sample_hours_gate_passed": False, "drawdown_guard_passed": False},
-        "metrics": {"reward_to_trading_loss_ratio": 5.0, "max_drawdown_mtm_fraction": 0.001},
+        "metrics": {
+            "reward_to_trading_loss_ratio": 5.0,
+            "max_drawdown_mtm_fraction": 0.001,
+        },
     }
     good_capital = {
         "status": "capital_risk_stress_passed",
@@ -2273,14 +2679,27 @@ def test_candidate_leaderboard_demotes_capital_risk_failures() -> None:
     }
     result = build_candidate_leaderboard(
         [
-            CandidateEvidence("higher_income_bad_capital", gate(1900), drawdown_guard=drawdown, capital_risk=bad_capital),
-            CandidateEvidence("lower_income_good_capital", gate(1300), drawdown_guard=drawdown, capital_risk=good_capital),
+            CandidateEvidence(
+                "higher_income_bad_capital",
+                gate(1900),
+                drawdown_guard=drawdown,
+                capital_risk=bad_capital,
+            ),
+            CandidateEvidence(
+                "lower_income_good_capital",
+                gate(1300),
+                drawdown_guard=drawdown,
+                capital_risk=good_capital,
+            ),
         ]
     )
     assert result["leader"]["name"] == "lower_income_good_capital"
     assert not result["candidates"][1]["capital_core_passed"]
     assert result["leader"]["capital_configured_cap_loss_usdc"] == 120
-    assert result["policy_leaders"]["risk_first_leader"]["name"] == "lower_income_good_capital"
+    assert (
+        result["policy_leaders"]["risk_first_leader"]["name"]
+        == "lower_income_good_capital"
+    )
 
 
 def test_candidate_leaderboard_exposes_and_prefers_lower_inventory_pressure() -> None:
@@ -2315,7 +2734,10 @@ def test_candidate_leaderboard_exposes_and_prefers_lower_inventory_pressure() ->
         return {
             "status": "drawdown_guard_sample_pending",
             "risk_core_passed": True,
-            "gates": {"sample_hours_gate_passed": False, "drawdown_guard_passed": False},
+            "gates": {
+                "sample_hours_gate_passed": False,
+                "drawdown_guard_passed": False,
+            },
             "lp_config": {
                 "quote_size_shares": 200,
                 "active_capital_limit": 1200,
@@ -2335,8 +2757,12 @@ def test_candidate_leaderboard_exposes_and_prefers_lower_inventory_pressure() ->
 
     result = build_candidate_leaderboard(
         [
-            CandidateEvidence("higher_income_higher_active", gate(1800), drawdown_guard=drawdown(0.60)),
-            CandidateEvidence("lower_active", gate(1500), drawdown_guard=drawdown(0.40)),
+            CandidateEvidence(
+                "higher_income_higher_active", gate(1800), drawdown_guard=drawdown(0.60)
+            ),
+            CandidateEvidence(
+                "lower_active", gate(1500), drawdown_guard=drawdown(0.40)
+            ),
         ]
     )
     assert result["leader"]["name"] == "lower_active"
@@ -2386,15 +2812,25 @@ def test_candidate_leaderboard_reports_capture_needed_after_cap_loss() -> None:
         },
         "blockers": [],
     }
-    result = build_candidate_leaderboard([CandidateEvidence("candidate", gate, metadata={"quote_size": 275}, capital_risk=capital)])
+    result = build_candidate_leaderboard(
+        [
+            CandidateEvidence(
+                "candidate", gate, metadata={"quote_size": 275}, capital_risk=capital
+            )
+        ]
+    )
     leader = result["leader"]
     assert leader["capture_needed_for_target"] == pytest.approx(0.3125)
     assert leader["capture_needed_after_cap_loss"] == pytest.approx(0.40625)
-    assert leader["after_cap_loss_income_buffer_at_required_capture"] == pytest.approx(0.3)
+    assert leader["after_cap_loss_income_buffer_at_required_capture"] == pytest.approx(
+        0.3
+    )
     assert leader["capital_after_cap_loss_target_passed"]
 
 
-def test_candidate_leaderboard_allows_after_cap_shortfall_as_warning_when_configured() -> None:
+def test_candidate_leaderboard_allows_after_cap_shortfall_as_warning_when_configured() -> (
+    None
+):
     gate = {
         "status": "depth_not_ready",
         "config": {"target_monthly_usdc": 1000},
@@ -2435,13 +2871,22 @@ def test_candidate_leaderboard_allows_after_cap_shortfall_as_warning_when_config
         "warnings": ["configured-cap loss leaves p05 monthly income below target"],
         "blockers": [],
     }
-    result = build_candidate_leaderboard([CandidateEvidence("candidate", gate, metadata={"quote_size": 275}, capital_risk=capital)])
+    result = build_candidate_leaderboard(
+        [
+            CandidateEvidence(
+                "candidate", gate, metadata={"quote_size": 275}, capital_risk=capital
+            )
+        ]
+    )
     leader = result["leader"]
     assert not leader["capital_after_cap_loss_target_passed"]
     assert not leader["capital_after_cap_loss_target_required"]
     assert leader["capital_core_passed"]
     assert leader["capital_warnings"]
-    assert "configured-cap loss leaves p05 monthly income below target" not in leader["capital_blockers"]
+    assert (
+        "configured-cap loss leaves p05 monthly income below target"
+        not in leader["capital_blockers"]
+    )
     assert leader["autonomous_action"] == "continue_public_paper_current_size"
     assert leader["recommended_quote_scale"] == pytest.approx(1.0)
 
@@ -2490,7 +2935,13 @@ def test_candidate_leaderboard_recommends_autonomous_size_reduction() -> None:
         },
         "blockers": ["configured inventory-cap loss exceeds 10% of capital"],
     }
-    result = build_candidate_leaderboard([CandidateEvidence("candidate", gate, metadata={"quote_size": 275}, capital_risk=capital)])
+    result = build_candidate_leaderboard(
+        [
+            CandidateEvidence(
+                "candidate", gate, metadata={"quote_size": 275}, capital_risk=capital
+            )
+        ]
+    )
     leader = result["leader"]
     assert leader["autonomous_action"] == "reduce_size_continue_public_paper"
     assert leader["recommended_quote_scale"] == pytest.approx(0.5)
@@ -2498,7 +2949,9 @@ def test_candidate_leaderboard_recommends_autonomous_size_reduction() -> None:
     assert "configured cap loss" in leader["autonomous_action_reason"]
 
 
-def test_candidate_leaderboard_does_not_promote_under_minimum_rows_over_mature_sample() -> None:
+def test_candidate_leaderboard_does_not_promote_under_minimum_rows_over_mature_sample() -> (
+    None
+):
     def gate(name: str, income: float, rows: int, hours: float) -> CandidateEvidence:
         row_gate_passed = rows >= 24
         gate_doc = {
@@ -2542,7 +2995,9 @@ def test_candidate_leaderboard_does_not_promote_under_minimum_rows_over_mature_s
     assert result["candidates"][0]["quote_rows_gate_passed"]
 
 
-def test_candidate_leaderboard_uses_provisional_sample_hours_before_short_scout() -> None:
+def test_candidate_leaderboard_uses_provisional_sample_hours_before_short_scout() -> (
+    None
+):
     def gate_doc(name: str, income: float, hours: float) -> CandidateEvidence:
         return CandidateEvidence(
             name,
@@ -2588,7 +3043,10 @@ def test_candidate_leaderboard_uses_provisional_sample_hours_before_short_scout(
 
 
 def test_refresh_candidate_leaderboard_parses_named_paths_safely() -> None:
-    assert _split_named_path("q300=C:/tmp/bg.json", "--candidate") == ("q300", "C:/tmp/bg.json")
+    assert _split_named_path("q300=C:/tmp/bg.json", "--candidate") == (
+        "q300",
+        "C:/tmp/bg.json",
+    )
     assert _safe_name("q300/cap10 d0.06") == "q300_cap10_d0.06"
     with pytest.raises(SystemExit):
         _split_named_path("missing_equals", "--candidate")
@@ -2598,7 +3056,13 @@ def test_refresh_candidate_leaderboard_pending_candidate_is_non_promotable() -> 
     gate = _pending_gate("snapshot missing")
     drawdown = _pending_drawdown("snapshot missing")
     capital = _pending_capital("snapshot missing")
-    result = build_candidate_leaderboard([CandidateEvidence("pending", gate, drawdown_guard=drawdown, capital_risk=capital)])
+    result = build_candidate_leaderboard(
+        [
+            CandidateEvidence(
+                "pending", gate, drawdown_guard=drawdown, capital_risk=capital
+            )
+        ]
+    )
     assert result["status"] == "no_public_paper_candidate_ready"
     assert result["leader"]["name"] == "pending"
     assert not result["leader"]["income_gate_passed"]
@@ -2625,7 +3089,9 @@ def test_refresh_candidate_leaderboard_freshness_gate_is_opt_in(tmp_path) -> Non
     assert "snapshot age" in message
     assert "quotes age" in message
 
-    result = build_candidate_leaderboard([CandidateEvidence("stale", _pending_gate(message))])
+    result = build_candidate_leaderboard(
+        [CandidateEvidence("stale", _pending_gate(message))]
+    )
     assert result["status"] == "no_public_paper_candidate_ready"
     assert not result["leader"]["income_gate_passed"]
 
@@ -2637,7 +3103,10 @@ def test_candidate_leaderboard_exposes_input_freshness_metadata() -> None:
                 "fresh",
                 {
                     "status": "depth_not_ready",
-                    "metrics": {"income_p05_at_required_capture": 1200, "required_capture_rate": 0.5},
+                    "metrics": {
+                        "income_p05_at_required_capture": 1200,
+                        "required_capture_rate": 0.5,
+                    },
                     "gates": {},
                 },
                 metadata={
@@ -2661,7 +3130,11 @@ def test_candidate_leaderboard_exposes_input_freshness_metadata() -> None:
 def test_partial_rescue_grid_selection_requires_drawdown_core() -> None:
     assert (
         partial_rescue_grid._selection_status(
-            {"depth_ready": False, "risk_income_gate_passed": True, "drawdown_core_passed": True}
+            {
+                "depth_ready": False,
+                "risk_income_gate_passed": True,
+                "drawdown_core_passed": True,
+            }
         )
         == "selected_risk_income_drawdown_capital_passed_sample_not_ready"
     )
@@ -2678,13 +3151,19 @@ def test_partial_rescue_grid_selection_requires_drawdown_core() -> None:
     )
     assert (
         partial_rescue_grid._selection_status(
-            {"depth_ready": False, "risk_income_gate_passed": True, "drawdown_core_passed": False}
+            {
+                "depth_ready": False,
+                "risk_income_gate_passed": True,
+                "drawdown_core_passed": False,
+            }
         )
         == "selected_risk_income_passed_drawdown_failed"
     )
 
 
-def test_launch_live_paper_candidate_generates_parameterized_public_scripts(tmp_path) -> None:
+def test_launch_live_paper_candidate_generates_parameterized_public_scripts(
+    tmp_path,
+) -> None:
     cfg = LaunchCandidateConfig(
         name="q200 cap5 d006",
         state_dir=str(tmp_path),
@@ -2714,9 +3193,15 @@ def test_launch_live_paper_candidate_generates_parameterized_public_scripts(tmp_
     assert manifest["lp_config"]["max_total_unpaired"] == 300
     assert manifest["lp_config"]["depth_quote_size_fraction"] == 0.8
     assert manifest["safety"].startswith("public CLOB/Gamma reads only")
-    collector = tmp_path.joinpath("unit_run", "run_q200_cap5_d006_collector.ps1").read_text(encoding="utf-8")
-    watcher = tmp_path.joinpath("unit_run", "run_q200_cap5_d006_watcher.ps1").read_text(encoding="utf-8")
-    extend = tmp_path.joinpath("unit_run", "run_q200_cap5_d006_extend_to24h_and_audit.ps1").read_text(encoding="utf-8")
+    collector = tmp_path.joinpath(
+        "unit_run", "run_q200_cap5_d006_collector.ps1"
+    ).read_text(encoding="utf-8")
+    watcher = tmp_path.joinpath("unit_run", "run_q200_cap5_d006_watcher.ps1").read_text(
+        encoding="utf-8"
+    )
+    extend = tmp_path.joinpath(
+        "unit_run", "run_q200_cap5_d006_extend_to24h_and_audit.ps1"
+    ).read_text(encoding="utf-8")
     assert "--quote-size 200" in collector
     assert "--partial-rescue-max-residual-loss-usdc 5" in collector
     assert "--max-unpaired-per-market 40" in collector
@@ -2816,7 +3301,12 @@ def test_capital_risk_config_from_manifest_accepts_top_level_inventory_caps() ->
 
 
 def test_lp_config_from_manifest_infers_legacy_candidate_text() -> None:
-    cfg = lp_config_from_manifest({"_candidate_name": "q300_cap50_d010_baseline", "strategy": "q300safe_partial_rescue_cap50"})
+    cfg = lp_config_from_manifest(
+        {
+            "_candidate_name": "q300_cap50_d010_baseline",
+            "strategy": "q300safe_partial_rescue_cap50",
+        }
+    )
     assert cfg.quote_size_shares == 300
     assert cfg.partial_rescue_max_residual_loss_usdc == 50
     assert cfg.min_reward_density_per_day == 0.10
@@ -2852,7 +3342,11 @@ def test_drawdown_guard_blocks_oversized_active_orders() -> None:
     snapshots = make_synthetic_snapshots(seed=6, days=1, n_markets=6)
     result = evaluate_drawdown_guard(
         snapshots,
-        LPConfig(quote_size_shares=100, active_capital_limit=1200, min_reward_density_per_day=0.0),
+        LPConfig(
+            quote_size_shares=100,
+            active_capital_limit=1200,
+            min_reward_density_per_day=0.0,
+        ),
         DrawdownGuardConfig(
             min_observation_hours=0,
             max_mtm_drawdown_fraction=1.0,
@@ -2869,18 +3363,66 @@ def test_drawdown_guard_blocks_oversized_active_orders() -> None:
 def test_lifecycle_audit_requires_signed_order_paid_reward_and_final_pnl() -> None:
     events = pd.DataFrame(
         [
-            {"timestamp": "2026-01-01T00:00:00Z", "client_order_id": "o1", "lifecycle_state": "book_snapshot"},
-            {"timestamp": "2026-01-01T00:00:01Z", "client_order_id": "o1", "lifecycle_state": "ranking_decision"},
-            {"timestamp": "2026-01-01T00:00:02Z", "client_order_id": "o1", "lifecycle_state": "quote_intent"},
-            {"timestamp": "2026-01-01T00:00:03Z", "client_order_id": "o1", "lifecycle_state": "risk_gate"},
-            {"timestamp": "2026-01-01T00:00:04Z", "client_order_id": "o1", "lifecycle_state": "sign"},
-            {"timestamp": "2026-01-01T00:00:05Z", "client_order_id": "o1", "lifecycle_state": "submit"},
-            {"timestamp": "2026-01-01T00:00:06Z", "client_order_id": "o1", "lifecycle_state": "ack"},
-            {"timestamp": "2026-01-01T00:00:07Z", "client_order_id": "o1", "lifecycle_state": "queue_estimate"},
-            {"timestamp": "2026-01-01T00:00:08Z", "client_order_id": "o1", "lifecycle_state": "resting"},
-            {"timestamp": "2026-01-01T00:01:00Z", "client_order_id": "o1", "lifecycle_state": "no_fill"},
-            {"timestamp": "2026-01-01T00:05:00Z", "client_order_id": "o1", "lifecycle_state": "cancel_request"},
-            {"timestamp": "2026-01-01T00:05:04Z", "client_order_id": "o1", "lifecycle_state": "cancel_confirm"},
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "book_snapshot",
+            },
+            {
+                "timestamp": "2026-01-01T00:00:01Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "ranking_decision",
+            },
+            {
+                "timestamp": "2026-01-01T00:00:02Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "quote_intent",
+            },
+            {
+                "timestamp": "2026-01-01T00:00:03Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "risk_gate",
+            },
+            {
+                "timestamp": "2026-01-01T00:00:04Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "sign",
+            },
+            {
+                "timestamp": "2026-01-01T00:00:05Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "submit",
+            },
+            {
+                "timestamp": "2026-01-01T00:00:06Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "ack",
+            },
+            {
+                "timestamp": "2026-01-01T00:00:07Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "queue_estimate",
+            },
+            {
+                "timestamp": "2026-01-01T00:00:08Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "resting",
+            },
+            {
+                "timestamp": "2026-01-01T00:01:00Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "no_fill",
+            },
+            {
+                "timestamp": "2026-01-01T00:05:00Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "cancel_request",
+            },
+            {
+                "timestamp": "2026-01-01T00:05:04Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "cancel_confirm",
+            },
             {
                 "timestamp": "2026-01-01T00:06:00Z",
                 "client_order_id": "o1",
@@ -2901,7 +3443,9 @@ def test_lifecycle_audit_requires_signed_order_paid_reward_and_final_pnl() -> No
             },
         ]
     )
-    result = audit_order_lifecycle(events, LifecycleAuditConfig(min_reward_capture_rate=0.5))
+    result = audit_order_lifecycle(
+        events, LifecycleAuditConfig(min_reward_capture_rate=0.5)
+    )
     assert result["status"] == "deployment_lifecycle_passed"
     assert result["metrics"]["paid_reward_usdc"] == 0.6
     assert result["metrics"]["reward_capture_rate"] == 0.6
@@ -2911,9 +3455,21 @@ def test_lifecycle_audit_requires_signed_order_paid_reward_and_final_pnl() -> No
 def test_lifecycle_audit_blocks_shadow_or_incomplete_evidence() -> None:
     events = pd.DataFrame(
         [
-            {"timestamp": "2026-01-01T00:00:00Z", "client_order_id": "o1", "lifecycle_state": "quote_intent"},
-            {"timestamp": "2026-01-01T00:00:05Z", "client_order_id": "o1", "lifecycle_state": "submit"},
-            {"timestamp": "2026-01-01T00:00:06Z", "client_order_id": "o1", "lifecycle_state": "ack"},
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "quote_intent",
+            },
+            {
+                "timestamp": "2026-01-01T00:00:05Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "submit",
+            },
+            {
+                "timestamp": "2026-01-01T00:00:06Z",
+                "client_order_id": "o1",
+                "lifecycle_state": "ack",
+            },
             {
                 "timestamp": "2026-01-01T00:00:10Z",
                 "client_order_id": "o1",
@@ -2955,7 +3511,10 @@ def test_lifecycle_ledger_hash_chain_and_csv_export(tmp_path) -> None:
     verified = verify_lifecycle_ledger(ledger)
     assert verified["status"] == "lifecycle_ledger_integrity_passed"
     out_csv = export_lifecycle_csv(ledger, tmp_path / "lifecycle.csv")
-    assert pd.read_csv(out_csv)["lifecycle_state"].tolist() == ["book_snapshot", "ranking_decision"]
+    assert pd.read_csv(out_csv)["lifecycle_state"].tolist() == [
+        "book_snapshot",
+        "ranking_decision",
+    ]
     assert any(row["column"] == "paid_reward_usdc" for row in lifecycle_event_schema())
 
 
@@ -2998,10 +3557,14 @@ def test_paid_reward_reconciliation_passes_and_blocks_missing_paid() -> None:
             }
         ]
     )
-    ok = reconcile_paid_rewards(estimates, paid, RewardReconciliationConfig(require_client_order_match=True))
+    ok = reconcile_paid_rewards(
+        estimates, paid, RewardReconciliationConfig(require_client_order_match=True)
+    )
     assert ok["status"] == "paid_reward_reconciliation_passed"
     assert ok["metrics"]["reward_capture_rate"] == 0.6
     missing = reconcile_paid_rewards(estimates, pd.DataFrame())
     assert missing["status"] == "paid_reward_reconciliation_incomplete"
     assert not missing["gates"]["paid_rewards_present"]
-    assert any(row["field"] == "paid_reward_usdc" for row in reward_reconciliation_schema())
+    assert any(
+        row["field"] == "paid_reward_usdc" for row in reward_reconciliation_schema()
+    )

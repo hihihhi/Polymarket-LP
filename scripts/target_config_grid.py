@@ -5,6 +5,7 @@ The selector is for research/paper monitoring only. It reads public snapshots,
 generates paper quote intents, applies target/capture/bootstrap/risk gates, and
 writes CSV/JSON artifacts. It never signs, submits, or cancels orders.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,7 +23,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from polymarket_lp.lp_backtest import LPConfig, load_snapshots
-from polymarket_lp.paper import PaperAnalysisConfig, analyze_paper_quotes, build_paper_quotes
+from polymarket_lp.paper import (
+    PaperAnalysisConfig,
+    analyze_paper_quotes,
+    build_paper_quotes,
+)
 from polymarket_lp.target import TargetMonitorConfig, target_monitor_from_summary
 from scripts.update_target_status import _bootstrap_target_from_quotes
 
@@ -50,17 +55,35 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--snapshots", required=True)
     p.add_argument("--out-dir", default="data/processed/target_config_grid")
-    p.add_argument("--selected-quotes", default="", help="Optional CSV for the selected quote intents")
+    p.add_argument(
+        "--selected-quotes",
+        default="",
+        help="Optional CSV for the selected quote intents",
+    )
     p.add_argument("--offset-grid", default="0.02,0.025,0.03,0.035")
     p.add_argument("--density-grid", default="0.0256,0.04,0.052,0.06,0.08,0.10")
     p.add_argument("--quote-size", type=float, default=800.0)
     p.add_argument("--safety-margin", type=float, default=0.015)
     p.add_argument("--active-capital-limit", type=float, default=1900.0)
-    p.add_argument("--max-unpaired-per-market", type=float, default=LPConfig().max_unpaired_per_market)
-    p.add_argument("--max-total-unpaired", type=float, default=LPConfig().max_total_unpaired)
-    p.add_argument("--max-cluster-unpaired", type=float, default=LPConfig().max_cluster_unpaired)
-    p.add_argument("--max-unpaired-minutes", type=float, default=LPConfig().max_unpaired_minutes)
-    p.add_argument("--partial-rescue-max-residual-loss-usdc", type=float, default=LPConfig().partial_rescue_max_residual_loss_usdc)
+    p.add_argument(
+        "--max-unpaired-per-market",
+        type=float,
+        default=LPConfig().max_unpaired_per_market,
+    )
+    p.add_argument(
+        "--max-total-unpaired", type=float, default=LPConfig().max_total_unpaired
+    )
+    p.add_argument(
+        "--max-cluster-unpaired", type=float, default=LPConfig().max_cluster_unpaired
+    )
+    p.add_argument(
+        "--max-unpaired-minutes", type=float, default=LPConfig().max_unpaired_minutes
+    )
+    p.add_argument(
+        "--partial-rescue-max-residual-loss-usdc",
+        type=float,
+        default=LPConfig().partial_rescue_max_residual_loss_usdc,
+    )
     p.add_argument("--excluded-categories", default="sports,crypto")
     p.add_argument("--max-recent-vol", type=float, default=0.006)
     p.add_argument("--max-recent-jump", type=float, default=0.025)
@@ -108,7 +131,9 @@ def main() -> None:
     )
     candidates: list[dict[str, Any]] = []
     quote_by_key: dict[tuple[float, float], pd.DataFrame] = {}
-    for offset, density in product(_float_grid(args.offset_grid), _float_grid(args.density_grid)):
+    for offset, density in product(
+        _float_grid(args.offset_grid), _float_grid(args.density_grid)
+    ):
         cfg = LPConfig(
             quote_size_shares=args.quote_size,
             quote_offset=offset,
@@ -143,7 +168,10 @@ def main() -> None:
         )
         bootstrap = _bootstrap_target_from_quotes(
             quotes,
-            cfg=TargetMonitorConfig(target_monthly_usdc=args.target_monthly, reward_to_loss_haircut=args.reward_to_loss_haircut),
+            cfg=TargetMonitorConfig(
+                target_monthly_usdc=args.target_monthly,
+                reward_to_loss_haircut=args.reward_to_loss_haircut,
+            ),
             max_reward_gap_seconds=args.max_reward_gap_seconds,
             resamples=args.bootstrap_resamples,
             seed=args.bootstrap_seed,
@@ -156,7 +184,11 @@ def main() -> None:
         quote_by_key[(offset, density)] = quotes
 
     frame = pd.DataFrame(candidates).sort_values(
-        ["selected_gate_passed", "captured_net_monthly_p05", "avg_active_pair_notional"],
+        [
+            "selected_gate_passed",
+            "captured_net_monthly_p05",
+            "avg_active_pair_notional",
+        ],
         ascending=[False, False, True],
     )
     frame.to_csv(out / "target_config_grid.csv", index=False)
@@ -191,14 +223,36 @@ def main() -> None:
         "csv": str(out / "target_config_grid.csv"),
         "safety": "paper research only; no private keys, order signing, order submission, or cancellation",
     }
-    (out / "target_config_selection.json").write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
+    (out / "target_config_selection.json").write_text(
+        json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8"
+    )
     if selected and bool(selected.get("selected_gate_passed")):
-        selected_quotes = Path(args.selected_quotes) if args.selected_quotes else out / "selected_quotes.csv"
+        selected_quotes = (
+            Path(args.selected_quotes)
+            if args.selected_quotes
+            else out / "selected_quotes.csv"
+        )
         selected_quotes.parent.mkdir(parents=True, exist_ok=True)
-        quote_by_key[(float(selected["quote_offset"]), float(selected["min_reward_density_per_day"]))].to_csv(selected_quotes, index=False)
+        quote_by_key[
+            (
+                float(selected["quote_offset"]),
+                float(selected["min_reward_density_per_day"]),
+            )
+        ].to_csv(selected_quotes, index=False)
         payload["selected_quotes"] = str(selected_quotes)
-        (out / "target_config_selection.json").write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
-    print(json.dumps({"selection_json": str(out / "target_config_selection.json"), "selected": selected}, indent=2, default=str))
+        (out / "target_config_selection.json").write_text(
+            json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8"
+        )
+    print(
+        json.dumps(
+            {
+                "selection_json": str(out / "target_config_selection.json"),
+                "selected": selected,
+            },
+            indent=2,
+            default=str,
+        )
+    )
 
 
 def _candidate_row(
@@ -214,11 +268,14 @@ def _candidate_row(
         captured_p05 >= selector.target_monthly_usdc * selector.min_target_margin
         and _to_float(summary.get("fill_proxy_rate")) <= selector.max_fill_proxy_rate
         and _to_float(summary.get("stale_fill_rate")) <= selector.max_stale_fill_rate
-        and _to_float(summary.get("pending_quote_rate")) <= selector.max_pending_quote_rate
-        and _to_float(summary.get("max_abs_mid_change_to_next")) <= selector.max_abs_mid_change_to_next
+        and _to_float(summary.get("pending_quote_rate"))
+        <= selector.max_pending_quote_rate
+        and _to_float(summary.get("max_abs_mid_change_to_next"))
+        <= selector.max_abs_mid_change_to_next
         and int(summary.get("quote_pair_intervals", 0)) >= selector.min_pair_intervals
         and int(summary.get("unique_markets_quoted", 0)) >= selector.min_unique_markets
-        and _to_float(summary.get("avg_active_pair_notional")) <= selector.max_avg_active_notional
+        and _to_float(summary.get("avg_active_pair_notional"))
+        <= selector.max_avg_active_notional
         and _to_float(summary.get("duration_hours")) >= selector.min_observation_hours
     )
     return {
@@ -229,18 +286,30 @@ def _candidate_row(
         "unique_markets_quoted": int(summary.get("unique_markets_quoted", 0)),
         "duration_hours": _to_float(summary.get("duration_hours")),
         "avg_active_pair_notional": _to_float(summary.get("avg_active_pair_notional")),
-        "avg_reward_density_per_day": _to_float(summary.get("avg_reward_density_per_day")),
-        "estimated_reward_accrual_usdc": _to_float(summary.get("estimated_reward_accrual_usdc")),
+        "avg_reward_density_per_day": _to_float(
+            summary.get("avg_reward_density_per_day")
+        ),
+        "estimated_reward_accrual_usdc": _to_float(
+            summary.get("estimated_reward_accrual_usdc")
+        ),
         "fill_proxy_rate": _to_float(summary.get("fill_proxy_rate")),
         "stale_fill_rate": _to_float(summary.get("stale_fill_rate")),
         "pending_quote_rate": _to_float(summary.get("pending_quote_rate")),
-        "max_abs_mid_change_to_next": _to_float(summary.get("max_abs_mid_change_to_next")),
-        "net_monthly_after_loss_haircut": _to_float(monitor.get("target_math", {}).get("net_monthly_after_loss_haircut")),
-        "capture_needed_for_target": _to_float(monitor.get("target_math", {}).get("capture_needed_for_target")),
+        "max_abs_mid_change_to_next": _to_float(
+            summary.get("max_abs_mid_change_to_next")
+        ),
+        "net_monthly_after_loss_haircut": _to_float(
+            monitor.get("target_math", {}).get("net_monthly_after_loss_haircut")
+        ),
+        "capture_needed_for_target": _to_float(
+            monitor.get("target_math", {}).get("capture_needed_for_target")
+        ),
         "bootstrap_intervals": int(bootstrap.get("intervals", 0) or 0),
         "net_monthly_p05": _to_float(bootstrap.get("net_monthly_p05")),
         "captured_net_monthly_p05": captured_p05,
-        "captured_p05_target_gate_passed": bool(bootstrap.get("captured_p05_target_gate_passed", False)),
+        "captured_p05_target_gate_passed": bool(
+            bootstrap.get("captured_p05_target_gate_passed", False)
+        ),
         "selected_gate_passed": selected_gate,
     }
 
