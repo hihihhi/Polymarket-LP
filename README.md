@@ -8,7 +8,7 @@ A Python simulator and paper-research toolkit for testing risk-gated Polymarket 
 - Headline result - **SYNTHETIC (seed 7)**: `total_pnl_usdc = 122.63378371068302`; **SYNTHETIC (seed 7)**: `pair_completion_ratio_shares = 0.0 (0%)`. Source: `docs/lp_synthetic_seed7_summary.csv:2`.
 - **SYNTHETIC (seed 7)**: `total_reward_usdc = 163.42548863585822`, `total_inventory_exit_pnl_usdc = -40.79170492517545`, and `max_drawdown_mtm_usdc = -65.50954640844861`. Source: `docs/lp_synthetic_seed7_summary.csv:2`.
 - In-sample/out-of-sample classification: UNKNOWN. Live fills, cancellations, reward payouts, execution latency, and profitability: UNKNOWN.
-- License file: UNKNOWN (no `LICENSE` file is present). Project metadata declares MIT in `pyproject.toml`; no standalone license is added here.
+- License: MIT, matching the declaration in `pyproject.toml` and the standalone `LICENSE` file.
 
 ## Architecture
 
