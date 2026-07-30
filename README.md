@@ -38,7 +38,7 @@ uv run ruff check .
 uv run ruff format --check .
 uv run mypy
 uv run pytest -q
-uv run python scripts/lp_backtest.py --synthetic --seed 7 --synthetic-days 14 --synthetic-markets 30 --quote-size 800 --quote-offset 0.035 --excluded-categories "" --active-capital-limit 1900 --max-unpaired-per-market 800 --max-total-unpaired 1200 --max-cluster-unpaired 600 --exit-loss-cents 0.05 --max-unpaired-minutes 90 --max-recent-vol 0.006 --max-recent-jump 0.025 --vol-quote-multiplier 0.5 --out-dir data/processed/income_density_wide
+uv run python scripts/lp_backtest.py --synthetic --seed 7 --synthetic-days 14 --synthetic-markets 30 --quote-size 800 --quote-offset 0.035 --excluded-categories= --active-capital-limit 1900 --max-unpaired-per-market 800 --max-total-unpaired 1200 --max-cluster-unpaired 600 --exit-loss-cents 0.05 --max-unpaired-minutes 90 --max-recent-vol 0.006 --max-recent-jump 0.025 --vol-quote-multiplier 0.5 --out-dir data/processed/income_density_wide
 ```
 
 For a snapshot replay, provide a point-in-time CSV with the required columns documented in `docs/PAPER_RUN_AND_BACKTEST.md` and run `uv run python scripts/lp_backtest.py --snapshots <path> --out-dir <path>`.
