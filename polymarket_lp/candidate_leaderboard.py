@@ -52,19 +52,19 @@ def _candidate_row(candidate: CandidateEvidence) -> dict[str, Any]:
     capital_config = _dict(capital.get("config"))
     capital_metrics = _dict(capital.get("metrics"))
     lp_config = _dict(drawdown.get("lp_config"))
-    blockers = gate.get("blockers") if isinstance(gate.get("blockers"), list) else []
+    blockers_value = gate.get("blockers")
+    blockers = blockers_value if isinstance(blockers_value, list) else []
+    drawdown_blockers_value = drawdown.get("blockers")
     drawdown_blockers = (
-        drawdown.get("blockers") if isinstance(drawdown.get("blockers"), list) else []
+        drawdown_blockers_value if isinstance(drawdown_blockers_value, list) else []
     )
+    capital_blockers_value = capital.get("blockers")
     capital_blockers = (
-        list(capital.get("blockers"))
-        if isinstance(capital.get("blockers"), list)
-        else []
+        list(capital_blockers_value) if isinstance(capital_blockers_value, list) else []
     )
+    capital_warnings_value = capital.get("warnings")
     capital_warnings = (
-        list(capital.get("warnings"))
-        if isinstance(capital.get("warnings"), list)
-        else []
+        list(capital_warnings_value) if isinstance(capital_warnings_value, list) else []
     )
     metadata = _dict(candidate.metadata)
     freshness = _dict(metadata.get("_input_freshness"))
