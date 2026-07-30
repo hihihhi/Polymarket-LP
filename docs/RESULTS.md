@@ -1,63 +1,23 @@
-# Current synthetic results
+# Current reproducible synthetic result
 
-These are L0 synthetic stress-test results only. They are useful for comparing strategy logic, not for claiming live profitability.
+This is an L0 synthetic stress test, not evidence of live profitability. Its IS/OOS classification is **unknown** and its live status is **unknown**.
 
-## Best current profile: reward-density wide LP
+The strategy and data-generation arguments in the `README.md` command were run twice against the publication worktree, using separate output directories. Both runs produced byte-identical `lp_summary.csv` files with SHA-256 `fd8178302e8f3143da4911c003c771d042a54a28c44538fc16c751079ad76181`.
 
-Command equivalent:
+The unrounded output row is committed at `docs/lp_synthetic_seed7_summary.csv:2`. Selected fields, copied verbatim from that row:
 
-```bash
-python scripts/lp_backtest.py \
-  --synthetic \
-  --quote-size 800 \
-  --quote-offset 0.035 \
-  --excluded-categories "" \
-  --active-capital-limit 1900 \
-  --max-unpaired-per-market 800 \
-  --max-total-unpaired 1200 \
-  --max-cluster-unpaired 600 \
-  --exit-loss-cents 0.05 \
-  --max-unpaired-minutes 90
-```
-
-With reward-density ranking and volatility gates configured in `LPConfig`:
-
-```python
-rank_by_reward_density=True
-max_recent_vol=0.006
-max_recent_jump=0.025
-vol_quote_multiplier=0.5
-```
-
-14-day seed-7 synthetic output:
-
-| Metric | Value |
+| Metric field | Value |
 |---|---:|
-| Total PnL | `$134.22` |
-| 30-day equivalent | `~$287.61` |
-| Return on $2k | `6.71%` |
-| Total rewards | `$171.80` |
-| Inventory exit PnL | `-$37.58` |
-| Max MTM drawdown | `-3.10%` |
-| Reward / trading loss | `4.21` |
-| Max open inventory | `$330.97` |
-| Avg open inventory | `$1.73` |
-| Active order notional | `~$1,488` |
+| `total_reward_usdc` | `163.42548863585822` |
+| `total_inventory_exit_pnl_usdc` | `-40.79170492517545` |
+| `total_pnl_usdc` | `122.63378371068302` |
+| `return_on_initial_capital` | `0.06131689185534151` |
+| `max_drawdown_mtm_usdc` | `-65.50954640844861` |
+| `max_drawdown_mtm_pct` | `-0.03106791138596573` |
+| `reward_to_trading_loss_ratio` | `4.006341214117696` |
+| `pair_completion_ratio_shares` | `0.0` |
+| `max_open_inventory_notional` | `228.91051310793222` |
+| `avg_open_inventory_notional` | `0.17032032225292573` |
+| `max_active_order_notional` | `1488.0` |
 
-## Interpretation
-
-This finally clears the minimum `$200/month` synthetic target while keeping drawdown small. It does not clear the `$500-$1,000/month` target yet.
-
-Important weakness: pair completion is still `0%`, so the current profitable profile is mostly reward capture with wide quotes, not complete-set spread capture. The next iteration should add explicit rescue quoting and pair-priority logic.
-
-## Multi-seed 7-day probe
-
-Same family of profile, 7-day/18-market synthetic probe:
-
-| Seed | Monthly equivalent | Max MTM DD | Reward/loss |
-|---:|---:|---:|---:|
-| 1 | `$260.14` | `-2%` | `3.0` |
-| 2 | `$268.73` | `0%` | `inf` |
-| 3 | `$263.19` | `0%` | `inf` |
-
-This is not enough to declare robustness, but it is better than the previous income/turbo attempts that blew up.
+No annualization, monthly extrapolation, or qualitative performance label is applied.
